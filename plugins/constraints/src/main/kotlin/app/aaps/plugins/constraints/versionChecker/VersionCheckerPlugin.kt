@@ -60,12 +60,12 @@ class VersionCheckerPlugin @Inject constructor(
 
     override fun isClosedLoopAllowed(value: Constraint<Boolean>): Constraint<Boolean> {
         checkWarning()
-        versionCheckerUtils.triggerCheckVersion()
+        /*versionCheckerUtils.triggerCheckVersion()
         if (lastCheckOlderThan(gracePeriod.veryOld.daysToMillis()))
             value.set(false, rh.gs(R.string.very_old_version), this)
         val endDate = sp.getLong(rh.gs(app.aaps.core.utils.R.string.key_app_expiration) + "_" + config.VERSION_NAME, 0)
         if (endDate != 0L && dateUtil.now() > endDate)
-            value.set(false, rh.gs(R.string.application_expired), this)
+            value.set(false, rh.gs(R.string.application_expired), this)*/
         return value
     }
 
@@ -97,14 +97,14 @@ class VersionCheckerPlugin @Inject constructor(
             uiInteraction.addNotification(Notification.OLD_VERSION, message, Notification.NORMAL)
         }
 
-        val endDate = sp.getLong(rh.gs(app.aaps.core.utils.R.string.key_app_expiration) + "_" + config.VERSION_NAME, 0)
+        /*val endDate = sp.getLong(rh.gs(app.aaps.core.utils.R.string.key_app_expiration) + "_" + config.VERSION_NAME, 0)
         if (endDate != 0L && dateUtil.now() > endDate && shouldWarnAgain()) {
             // store last notification time
             sp.putLong(R.string.key_last_versionchecker_plugin_warning_timestamp, now)
 
             //notify
             uiInteraction.addNotification(Notification.VERSION_EXPIRE, rh.gs(R.string.application_expired), Notification.URGENT)
-        }
+        }*/
     }
 
     private fun shouldWarnAgain() =
