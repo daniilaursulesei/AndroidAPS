@@ -45,6 +45,7 @@
     <string name="maxvalueinpreferences">max value in preferences</string>
     <string name="hardlimit">hard limit</string>
     <string name="treatmentssafety_title">Treatments safety</string>
+    <string name="disable_Libre_smb_restrictions">Filtering active, go SMB sDani!</string>
 
     <!-- Objectives -->
     <string name="completed_well_done">Completed, well done!</string>
