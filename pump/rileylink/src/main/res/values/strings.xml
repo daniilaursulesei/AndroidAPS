@@ -123,4 +123,9 @@
     <string name="rileylink_diag_millis" comment="%1$d=a duration in milliseconds. Example: 32500 ms">%1$d ms</string>
     <string name="rileylink_diag_since" comment="%1$s=a clock time, already formatted. Example: since 21:19">since %1$s</string>
 
+    <string name="rileylink_diag_events">Live events</string>
+    <string name="rileylink_diag_events_empty">Nothing recorded yet</string>
+    <string name="rileylink_diag_copy">Copy diagnostics</string>
+    <string name="rileylink_diag_copied">Diagnostics copied to clipboard</string>
+
 </resources>

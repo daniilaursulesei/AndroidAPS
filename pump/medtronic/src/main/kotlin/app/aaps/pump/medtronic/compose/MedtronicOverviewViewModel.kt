@@ -28,6 +28,7 @@ import app.aaps.core.ui.compose.pump.PumpCommunicationStatus
 import app.aaps.core.ui.compose.pump.PumpInfoRow
 import app.aaps.core.ui.compose.pump.PumpOverviewUiState
 import app.aaps.core.ui.compose.pump.tickerFlow
+import app.aaps.pump.common.compose.DiagEventLine
 import app.aaps.pump.common.compose.RileyLinkDiagnosticsUiState
 import app.aaps.pump.common.events.EventRileyLinkDeviceStatusChange
 import app.aaps.pump.common.extensions.stringResource
@@ -35,6 +36,7 @@ import app.aaps.pump.common.hw.rileylink.ble.RFSpy
 import app.aaps.pump.common.hw.rileylink.ble.RileyLinkBLE
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkServiceState
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkTargetDevice
+import app.aaps.pump.common.hw.rileylink.diagnostics.DiagSeverity
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiagSnapshot
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
@@ -183,7 +185,14 @@ class MedtronicOverviewViewModel(
             gattWriteTimeouts = snapshot.gattWriteTimeouts,
             writesRefused = snapshot.writesWhileLinkDown,
             versionSlips = snapshot.versionSlipsSeen,
-            concurrentInitPeak = snapshot.concurrentInitPeak
+            concurrentInitPeak = snapshot.concurrentInitPeak,
+            events = snapshot.events.map { event ->
+                DiagEventLine(
+                    time = dateUtil.timeStringWithSeconds(event.atMillis),
+                    text = if (event.detail.isEmpty()) event.event else "${event.event}  ${event.detail}",
+                    warn = event.severity == DiagSeverity.WARN
+                )
+            }
         )
 
     private fun buildUiState(): PumpOverviewUiState {

@@ -17,6 +17,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,6 +42,7 @@ import app.aaps.pump.common.compose.RileyLinkPairWizardViewModel
 import app.aaps.pump.common.compose.RileyLinkStatusScreen
 import app.aaps.pump.common.compose.RileyLinkStatusViewModel
 import app.aaps.pump.medtronic.R
+import kotlinx.coroutines.launch
 
 class MedtronicComposeContent(
     private val pluginName: String,
@@ -55,6 +57,7 @@ class MedtronicComposeContent(
     ) {
         val overviewViewModel: MedtronicOverviewViewModel = metroViewModel()
         val snackbarHostState = LocalSnackbarHostState.current
+        val scope = rememberCoroutineScope()
 
         // Navigation state
         var showRileyLinkPairWizard by remember { mutableStateOf(false) }
@@ -191,7 +194,10 @@ class MedtronicComposeContent(
                     state = uiState,
                     customContent = {
                         Column(verticalArrangement = Arrangement.spacedBy(AapsSpacing.large)) {
-                            RileyLinkDiagnosticsCard(state = diagnosticsState)
+                            RileyLinkDiagnosticsCard(
+                                state = diagnosticsState,
+                                onShowMessage = { message -> scope.launch { snackbarHostState.showSnackbar(message) } }
+                            )
                             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                                 Image(
                                     painter = painterResource(R.drawable.ic_medtronic_veo),

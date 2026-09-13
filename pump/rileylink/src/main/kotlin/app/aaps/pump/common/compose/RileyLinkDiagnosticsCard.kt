@@ -1,6 +1,7 @@
 package app.aaps.pump.common.compose
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,15 +11,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import app.aaps.core.ui.compose.AapsCard
@@ -59,7 +67,20 @@ data class RileyLinkDiagnosticsUiState(
     val gattWriteTimeouts: Int,
     val writesRefused: Int,
     val versionSlips: Int,
-    val concurrentInitPeak: Int
+    val concurrentInitPeak: Int,
+    val events: List<DiagEventLine>
+)
+
+/**
+ * One line of the live event list, already formatted for display.
+ *
+ * @property warn true for the markers worth looking at first - a silent radio, a dropped link, a
+ *   refused write.
+ */
+data class DiagEventLine(
+    val time: String,
+    val text: String,
+    val warn: Boolean
 )
 
 /**
@@ -78,18 +99,35 @@ data class RileyLinkDiagnosticsUiState(
 @Composable
 fun RileyLinkDiagnosticsCard(
     state: RileyLinkDiagnosticsUiState,
+    onShowMessage: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val clipboard = LocalClipboardManager.current
+    val copiedMessage = stringResource(R.string.rileylink_diag_copied)
+    val plainText = buildPlainText(state)
+
     AapsCard(modifier = modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(AapsSpacing.large),
             verticalArrangement = Arrangement.spacedBy(AapsSpacing.small)
         ) {
-            Text(
-                text = stringResource(R.string.rileylink_diag_title),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = stringResource(R.string.rileylink_diag_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = {
+                    clipboard.setText(AnnotatedString(plainText))
+                    onShowMessage(copiedMessage)
+                }) {
+                    Icon(
+                        imageVector = Icons.Filled.ContentCopy,
+                        contentDescription = stringResource(R.string.rileylink_diag_copy)
+                    )
+                }
+            }
             HorizontalDivider()
 
             StatusRow(
@@ -196,8 +234,68 @@ fun RileyLinkDiagnosticsCard(
             ValueRow(stringResource(R.string.rileylink_diag_writes_refused), state.writesRefused.toString())
             ValueRow(stringResource(R.string.rileylink_diag_version_slips), state.versionSlips.toString())
             ValueRow(stringResource(R.string.rileylink_diag_concurrent_init_peak), state.concurrentInitPeak.toString())
+
+            Spacer(Modifier.size(AapsSpacing.small))
+            HorizontalDivider()
+
+            Text(
+                text = stringResource(R.string.rileylink_diag_events),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            if (state.events.isEmpty()) {
+                DetailText(stringResource(R.string.rileylink_diag_events_empty))
+            } else {
+                // Newest first, so the moment you are watching for is at the top and never needs
+                // scrolling. Hex lines are left unwrapped and this block scrolls sideways on its
+                // own, so the card never makes the whole page scroll sideways.
+                Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    state.events.forEach { line ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(AapsSpacing.medium)) {
+                            Text(
+                                text = line.time,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = line.text,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = if (line.warn) AapsTheme.generalColors.statusCritical else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
+}
+
+/**
+ * The whole card as plain text, for the copy button.
+ *
+ * Written to be pasted straight into a bug report: the same field names as the screen, then the
+ * event lines exactly as they appear in the log, so a reader can match them against an export.
+ */
+private fun buildPlainText(state: RileyLinkDiagnosticsUiState): String = buildString {
+    appendLine("RileyLink diagnostics")
+    appendLine("BLE113: ${state.ble113Version ?: if (state.linkUp) "connected" else "not connected"}")
+    appendLine("CC1110: ${state.chipState}" + if (state.chipState == ChipState.SILENT) " (${state.silentStreak} unanswered, since ${state.silentSince})" else "")
+    appendLine("Firmware: ${state.firmwareVersion ?: "-"} (source ${state.versionSource})")
+    appendLine("Command format: ${state.protocolFormat}   Encoding: ${state.encoding ?: "-"}")
+    appendLine()
+    appendLine("Last command (${state.lastCommandAt ?: "-"}): ${state.lastCommandName ?: "-"} ${state.lastCommandHex ?: ""}")
+    state.lastCommandDetail?.let { appendLine("  as the radio reads it: $it") }
+    appendLine("Last response (${state.lastResponseAt ?: "-"}): ${state.lastResponseHex ?: "none after ${state.noResponseWaited ?: "-"}"}")
+    appendLine()
+    appendLine("GATT operation: ${if (state.gattBusy) "busy" else "idle"}")
+    appendLine("Reader queue: ${state.readerQueue}   Pending notifications: ${state.pendingPermits}   Command queue: ${state.commandQueue}")
+    appendLine("Unexpected disconnects: ${state.unexpectedDisconnects}   GATT timeouts: ${state.gattWriteTimeouts}   Refused while link down: ${state.writesRefused}")
+    appendLine("Version bit slips: ${state.versionSlips}   Most inits at once: ${state.concurrentInitPeak}")
+    appendLine()
+    appendLine("Live events, newest first:")
+    state.events.forEach { appendLine("${it.time}  ${it.text}") }
 }
 
 @Composable
