@@ -28,10 +28,15 @@ import app.aaps.core.ui.compose.pump.PumpCommunicationStatus
 import app.aaps.core.ui.compose.pump.PumpInfoRow
 import app.aaps.core.ui.compose.pump.PumpOverviewUiState
 import app.aaps.core.ui.compose.pump.tickerFlow
+import app.aaps.pump.common.compose.RileyLinkDiagnosticsUiState
 import app.aaps.pump.common.events.EventRileyLinkDeviceStatusChange
 import app.aaps.pump.common.extensions.stringResource
+import app.aaps.pump.common.hw.rileylink.ble.RFSpy
+import app.aaps.pump.common.hw.rileylink.ble.RileyLinkBLE
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkServiceState
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkTargetDevice
+import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
+import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiagSnapshot
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
 import app.aaps.pump.common.hw.rileylink.service.tasks.ResetRileyLinkConfigurationTask
 import app.aaps.pump.common.hw.rileylink.service.tasks.ServiceTaskExecutor
@@ -87,12 +92,17 @@ class MedtronicOverviewViewModel(
     private val aapsLogger: AAPSLogger,
     private val resetRileyLinkConfigurationTaskProvider: () -> ResetRileyLinkConfigurationTask,
     private val wakeAndTuneTaskProvider: () -> WakeAndTuneTask,
-    private val context: Context
+    private val context: Context,
+    private val rileyLinkDiag: RileyLinkDiag,
+    private val rfSpy: RFSpy,
+    private val rileyLinkBLE: RileyLinkBLE
 ) : ViewModel() {
 
     companion object {
 
         private const val PLACEHOLDER = "-"
+        private const val PROTOCOL_V1 = "v1"
+        private const val PROTOCOL_V2 = "v2"
     }
 
     private val communicationStatus = PumpCommunicationStatus(rxBus, commandQueue, rh, viewModelScope)
@@ -128,6 +138,53 @@ class MedtronicOverviewViewModel(
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = buildUiState()
     )
+
+    /**
+     * State for the RileyLink diagnostics card.
+     *
+     * Kept apart from [uiState] because it moves on a different clock: the pump overview is
+     * rebuilt when pump values change or once a minute, while the diagnostics are meant to be
+     * watched live while something is going wrong.
+     */
+    val diagnosticsState: StateFlow<RileyLinkDiagnosticsUiState> = combine(
+        rileyLinkDiag.snapshot,
+        tickerFlow(2_000L)
+    ) { snapshot, _ -> buildDiagnosticsState(snapshot) }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = buildDiagnosticsState(rileyLinkDiag.snapshot.value)
+    )
+
+    private fun buildDiagnosticsState(snapshot: RileyLinkDiagSnapshot): RileyLinkDiagnosticsUiState =
+        RileyLinkDiagnosticsUiState(
+            linkUp = snapshot.linkUp,
+            ble113Version = snapshot.ble113Version,
+            chipState = snapshot.chipState,
+            silentStreak = snapshot.silentStreak,
+            silentSince = snapshot.silentSinceMillis?.let { dateUtil.timeString(it) },
+            firmwareVersion = snapshot.firmwareVersion,
+            versionSource = snapshot.versionSource,
+            protocolFormat = if (snapshot.protocolV2) PROTOCOL_V2 else PROTOCOL_V1,
+            encoding = snapshot.encoding?.name,
+            lastCommandName = snapshot.lastCommandName,
+            lastCommandHex = snapshot.lastCommandHex,
+            lastCommandDetail = snapshot.lastCommandDetail,
+            lastCommandAt = snapshot.lastCommandAtMillis?.let { dateUtil.timeStringWithSeconds(it) },
+            lastResponseHex = snapshot.lastResponseHex,
+            lastResponseAt = snapshot.lastResponseAtMillis?.let { dateUtil.timeStringWithSeconds(it) },
+            noResponseWaited = snapshot.lastWaitedMs
+                ?.takeIf { snapshot.lastResponseHex == null }
+                ?.let { rh.gs(RileyLinkR.string.rileylink_diag_millis, it.toInt()) },
+            gattBusy = rileyLinkBLE.gattOperationBusy,
+            readerQueue = rfSpy.queuedResponses,
+            pendingPermits = rfSpy.pendingPermits,
+            commandQueue = commandQueue.size(),
+            unexpectedDisconnects = snapshot.unexpectedDisconnects,
+            gattWriteTimeouts = snapshot.gattWriteTimeouts,
+            writesRefused = snapshot.writesWhileLinkDown,
+            versionSlips = snapshot.versionSlipsSeen,
+            concurrentInitPeak = snapshot.concurrentInitPeak
+        )
 
     private fun buildUiState(): PumpOverviewUiState {
         return PumpOverviewUiState(

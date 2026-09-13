@@ -1,0 +1,269 @@
+package app.aaps.pump.common.hw.rileylink.diagnostics
+
+import app.aaps.core.interfaces.logging.AAPSLogger
+import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.utils.pump.ByteUtil
+import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkEncodingType
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.atomic.AtomicInteger
+
+/** Where the firmware version in use came from. */
+enum class VersionSource {
+
+    /** No version resolved yet. */
+    NONE,
+
+    /** Read from the CC1110 on this connection. */
+    RADIO,
+
+    /** Reused from the last good read for this RileyLink, because this read failed. */
+    CACHE,
+
+    /** Nothing known, so the safe version 2 default is in use. */
+    FALLBACK
+}
+
+/** Whether the CC1110 is answering commands. */
+enum class ChipState {
+
+    /** Answering. */
+    RESPONDING,
+
+    /** Not answering, but has answered before on this connection. */
+    SILENT,
+
+    /** Nothing sent yet on this connection. */
+    UNKNOWN
+}
+
+/**
+ * Everything the diagnostics screen shows, in one immutable value.
+ *
+ * Times are epoch milliseconds so the screen can format them with the app's own date helper.
+ */
+data class RileyLinkDiagSnapshot(
+    val linkUp: Boolean = false,
+    val ble113Version: String? = null,
+    val cc1110Version: String? = null,
+    val firmwareVersion: String? = null,
+    val versionSource: VersionSource = VersionSource.NONE,
+    val protocolV2: Boolean = true,
+    val encoding: RileyLinkEncodingType? = null,
+    val chipState: ChipState = ChipState.UNKNOWN,
+    val silentStreak: Int = 0,
+    val silentSinceMillis: Long? = null,
+    val lastCommandName: String? = null,
+    val lastCommandHex: String? = null,
+    val lastCommandDetail: String? = null,
+    val lastCommandAtMillis: Long? = null,
+    val lastResponseHex: String? = null,
+    val lastResponseAtMillis: Long? = null,
+    val lastWaitedMs: Long? = null,
+    val unexpectedDisconnects: Int = 0,
+    val gattWriteTimeouts: Int = 0,
+    val writesWhileLinkDown: Int = 0,
+    val versionSlipsSeen: Int = 0,
+    val concurrentInitPeak: Int = 0
+)
+
+/**
+ * Collects what the RileyLink stack is doing, for the log and for the diagnostics screen.
+ *
+ * Every line it writes starts with `RLDIAG|` and is a flat list of `key=value` pairs, so a whole
+ * session can be pulled out of an exported log with one search and read without the surrounding
+ * noise. The point of the fixed shape is that these lines are meant to be compared between
+ * builds: same keys, same order, so a later log can be diffed against an earlier one.
+ *
+ * This class only records. It changes no behaviour and makes no decisions, so turning the markers
+ * on cannot alter how the pump is driven.
+ */
+@SingleIn(AppScope::class)
+@Inject
+class RileyLinkDiag(
+    private val aapsLogger: AAPSLogger
+) {
+
+    private val _snapshot = MutableStateFlow(RileyLinkDiagSnapshot())
+
+    /** Current state, for the diagnostics screen. */
+    val snapshot: StateFlow<RileyLinkDiagSnapshot> = _snapshot.asStateFlow()
+
+    /** How many init runs are in flight. More than one at a time is a fault in itself. */
+    private val initsInFlight = AtomicInteger(0)
+
+    private fun mark(event: String, vararg pairs: Pair<String, Any?>) {
+        val body = pairs.joinToString("|") { (k, v) -> "$k=$v" }
+        aapsLogger.debug(LTag.PUMPBTCOMM, if (body.isEmpty()) "RLDIAG|$event" else "RLDIAG|$event|$body")
+    }
+
+    private fun markWarn(event: String, vararg pairs: Pair<String, Any?>) {
+        val body = pairs.joinToString("|") { (k, v) -> "$k=$v" }
+        aapsLogger.warn(LTag.PUMPBTCOMM, if (body.isEmpty()) "RLDIAG|$event" else "RLDIAG|$event|$body")
+    }
+
+    // region version
+
+    /**
+     * The raw bytes of a `GetVersion` reply, before anything tries to make sense of them.
+     *
+     * Also runs the bit slip check, so a reply damaged between the CC1110 and the BLE113 is
+     * reported as such instead of being written off as noise. Detection only: nothing uses the
+     * recovered text.
+     */
+    @Synchronized
+    fun versionRead(raw: ByteArray?, parsed: String?) {
+        mark(
+            "VER_RAW",
+            "len" to (raw?.size ?: 0),
+            "hex" to ByteUtil.shortHexString(raw),
+            "parsed" to (parsed ?: "-")
+        )
+        if (parsed == null || !parsed.contains("subg_rfspy")) {
+            VersionSlip.detect(raw)?.let { slip ->
+                _snapshot.value = _snapshot.value.copy(versionSlipsSeen = _snapshot.value.versionSlipsSeen + 1)
+                markWarn(
+                    "VER_SLIP",
+                    "detected" to true,
+                    "shiftBits" to slip.shiftBits,
+                    "recovered" to slip.recovered
+                )
+            }
+        }
+    }
+
+    /** The version finally settled on, and where it came from. */
+    @Synchronized
+    fun versionVerdict(firmwareVersion: String, source: VersionSource, cc1110Version: String?, bleVersion: String?) {
+        _snapshot.value = _snapshot.value.copy(
+            firmwareVersion = firmwareVersion,
+            versionSource = source,
+            cc1110Version = cc1110Version,
+            ble113Version = bleVersion
+        )
+        mark("VER_VERDICT", "resolved" to firmwareVersion, "source" to source, "cc1110" to (cc1110Version ?: "-"), "ble113" to (bleVersion ?: "-"))
+    }
+
+    /** The wire settings derived from the version. All of them on one line, so drift is visible. */
+    @Synchronized
+    fun protocol(v2: Boolean, encoding: RileyLinkEncodingType, stopAtNull: Boolean) {
+        _snapshot.value = _snapshot.value.copy(protocolV2 = v2, encoding = encoding)
+        mark("PROTO", "packetV2" to v2, "enc" to encoding.name, "stopAtNull" to stopAtNull, "rxOffset" to if (v2) 3 else 2)
+    }
+
+    // endregion
+
+    // region init
+
+    /** Call when an init run starts. Reports the number in flight so a race shows up at once. */
+    fun initEnter(thread: String) {
+        val n = initsInFlight.incrementAndGet()
+        if (n > _snapshot.value.concurrentInitPeak) {
+            _snapshot.value = _snapshot.value.copy(concurrentInitPeak = n)
+        }
+        if (n > 1) markWarn("INIT_ENTER", "thread" to thread, "concurrent" to n)
+        else mark("INIT_ENTER", "thread" to thread, "concurrent" to n)
+    }
+
+    /** Call when an init run ends, whatever the outcome. */
+    fun initExit(thread: String) {
+        val n = initsInFlight.decrementAndGet()
+        mark("INIT_EXIT", "thread" to thread, "concurrent" to n)
+    }
+
+    // endregion
+
+    // region traffic
+
+    /** A command about to be written to the radio. [detail] carries the decoded fields. */
+    @Synchronized
+    fun tx(name: String, payload: ByteArray, detail: String?) {
+        _snapshot.value = _snapshot.value.copy(
+            lastCommandName = name,
+            lastCommandHex = ByteUtil.shortHexString(payload),
+            lastCommandDetail = detail,
+            lastCommandAtMillis = System.currentTimeMillis()
+        )
+        mark("TX", "op" to name, "len" to payload.size, "detail" to (detail ?: "-"), "hex" to ByteUtil.shortHexString(payload))
+    }
+
+    /**
+     * The outcome of the command reported by the last [tx].
+     *
+     * @param raw the reply, or null when nothing came back before [waitedMs] ran out.
+     */
+    @Synchronized
+    fun rx(name: String, raw: ByteArray?, waitedMs: Long) {
+        val now = System.currentTimeMillis()
+        val current = _snapshot.value
+        if (raw == null) {
+            val streak = current.silentStreak + 1
+            _snapshot.value = current.copy(
+                lastResponseHex = null,
+                lastResponseAtMillis = null,
+                lastWaitedMs = waitedMs,
+                chipState = ChipState.SILENT,
+                silentStreak = streak,
+                silentSinceMillis = current.silentSinceMillis ?: now
+            )
+            markWarn("RX", "op" to name, "result" to "NONE", "waited" to waitedMs, "silentStreak" to streak)
+        } else {
+            _snapshot.value = current.copy(
+                lastResponseHex = ByteUtil.shortHexString(raw),
+                lastResponseAtMillis = now,
+                lastWaitedMs = waitedMs,
+                chipState = ChipState.RESPONDING,
+                silentStreak = 0,
+                silentSinceMillis = null
+            )
+            mark("RX", "op" to name, "result" to "OK", "len" to raw.size, "waited" to waitedMs, "hex" to ByteUtil.shortHexString(raw))
+        }
+    }
+
+    // endregion
+
+    // region link
+
+    /** A GATT connection came up and the RileyLink services were found. */
+    @Synchronized
+    fun linkUp() {
+        _snapshot.value = _snapshot.value.copy(linkUp = true, chipState = ChipState.UNKNOWN, silentStreak = 0, silentSinceMillis = null)
+        mark("LINK", "event" to "connected")
+    }
+
+    /**
+     * A GATT connection went away.
+     *
+     * @param expected true when the app asked for the disconnect, false when the link dropped by
+     *   itself (a supervision timeout, for example).
+     */
+    @Synchronized
+    fun linkDown(expected: Boolean, status: Int, gattClosed: Boolean) {
+        val current = _snapshot.value
+        _snapshot.value = current.copy(
+            linkUp = false,
+            unexpectedDisconnects = current.unexpectedDisconnects + if (expected) 0 else 1
+        )
+        markWarn("LINK", "event" to "disconnected", "expected" to expected, "status" to status, "gattClosed" to gattClosed)
+    }
+
+    /** A GATT operation was refused because the link is down, instead of waiting for a timeout. */
+    @Synchronized
+    fun writeRefusedLinkDown(operation: String) {
+        _snapshot.value = _snapshot.value.copy(writesWhileLinkDown = _snapshot.value.writesWhileLinkDown + 1)
+        markWarn("LINK_REFUSED", "op" to operation, "reason" to "linkDown", "count" to _snapshot.value.writesWhileLinkDown)
+    }
+
+    /** A GATT operation waited its full timeout without any callback. */
+    @Synchronized
+    fun gattTimeout(operation: String, waitedMs: Long) {
+        _snapshot.value = _snapshot.value.copy(gattWriteTimeouts = _snapshot.value.gattWriteTimeouts + 1)
+        markWarn("GATT_TIMEOUT", "op" to operation, "waited" to waitedMs, "count" to _snapshot.value.gattWriteTimeouts)
+    }
+
+    // endregion
+}

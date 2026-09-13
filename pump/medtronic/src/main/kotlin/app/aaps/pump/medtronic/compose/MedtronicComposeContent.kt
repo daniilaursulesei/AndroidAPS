@@ -1,7 +1,9 @@
 package app.aaps.pump.medtronic.compose
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,10 +29,12 @@ import app.aaps.core.ui.compose.metroViewModel
 import app.aaps.core.interfaces.pump.BlePreCheck
 import app.aaps.core.ui.compose.ComposablePluginContent
 import app.aaps.core.ui.compose.LocalSnackbarHostState
+import app.aaps.core.ui.compose.AapsSpacing
 import app.aaps.core.ui.compose.ToolbarConfig
 import app.aaps.core.ui.compose.dialogs.OkDialog
 import app.aaps.core.ui.compose.pump.BlePreCheckHost
 import app.aaps.core.ui.compose.pump.PumpOverviewScreen
+import app.aaps.pump.common.compose.RileyLinkDiagnosticsCard
 import app.aaps.pump.common.compose.RileyLinkPairWizardEvent
 import app.aaps.pump.common.compose.RileyLinkPairWizardScreen
 import app.aaps.pump.common.compose.RileyLinkPairWizardViewModel
@@ -182,16 +186,20 @@ class MedtronicComposeContent(
 
             else                    -> {
                 val uiState by overviewViewModel.uiState.collectAsStateWithLifecycle()
+                val diagnosticsState by overviewViewModel.diagnosticsState.collectAsStateWithLifecycle()
                 PumpOverviewScreen(
                     state = uiState,
                     customContent = {
-                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Image(
-                                painter = painterResource(R.drawable.ic_medtronic_veo),
-                                contentDescription = null,
-                                modifier = Modifier.height(100.dp),
-                                contentScale = ContentScale.Fit
-                            )
+                        Column(verticalArrangement = Arrangement.spacedBy(AapsSpacing.large)) {
+                            RileyLinkDiagnosticsCard(state = diagnosticsState)
+                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                Image(
+                                    painter = painterResource(R.drawable.ic_medtronic_veo),
+                                    contentDescription = null,
+                                    modifier = Modifier.height(100.dp),
+                                    contentScale = ContentScale.Fit
+                                )
+                            }
                         }
                     }
                 )

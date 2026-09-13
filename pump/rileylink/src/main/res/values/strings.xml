@@ -85,4 +85,42 @@
     <string name="rileylink_pair_success">RileyLink paired successfully</string>
     <string name="rileylink_config_reset">RileyLink configuration reset</string>
 
+    <string name="rileylink_diag_title">RileyLink diagnostics</string>
+    <string name="rileylink_diag_ble113">BLE113</string>
+    <string name="rileylink_diag_cc1110">CC1110 radio</string>
+    <string name="rileylink_diag_link_up">Connected</string>
+    <string name="rileylink_diag_link_down">Not connected</string>
+    <string name="rileylink_diag_chip_responding">Responding</string>
+    <string name="rileylink_diag_chip_silent">Not responding</string>
+    <string name="rileylink_diag_chip_unknown">No commands sent yet</string>
+    <string name="rileylink_diag_silent_streak" comment="%1$d=number of commands in a row with no answer. Example: 17 unanswered in a row">%1$d unanswered in a row</string>
+    <string name="rileylink_diag_firmware">Firmware</string>
+    <string name="rileylink_diag_source_radio">read from radio</string>
+    <string name="rileylink_diag_source_cache">last known good for this RileyLink</string>
+    <string name="rileylink_diag_source_fallback">unknown, using version 2 command format</string>
+    <string name="rileylink_diag_source_none">not read yet</string>
+    <string name="rileylink_diag_fallback_warning">The firmware version could not be read. AAPS is using the version 2 command format, which is correct for every recent RileyLink. If the pump stays unreachable, power the RileyLink off and on.</string>
+    <string name="rileylink_diag_last_command">Last command sent</string>
+    <string name="rileylink_diag_last_response">Last response</string>
+    <string name="rileylink_diag_as_radio_reads">As the radio reads it</string>
+    <string name="rileylink_diag_no_response" comment="%1$s=how long AAPS waited, already formatted with its unit. Example: no answer after 32500 ms">No answer after %1$s</string>
+    <string name="rileylink_diag_none">None</string>
+    <string name="rileylink_diag_low_level">Low level state</string>
+    <string name="rileylink_diag_gatt_operation">GATT operation</string>
+    <string name="rileylink_diag_gatt_busy">busy</string>
+    <string name="rileylink_diag_gatt_idle">idle</string>
+    <string name="rileylink_diag_reader_queue">Reader queue</string>
+    <string name="rileylink_diag_pending_permits">Pending notifications</string>
+    <string name="rileylink_diag_command_queue">Command queue</string>
+    <string name="rileylink_diag_encoding">Encoding</string>
+    <string name="rileylink_diag_protocol">Command format</string>
+    <string name="rileylink_diag_counters">Counters since app start</string>
+    <string name="rileylink_diag_unexpected_disconnects">Unexpected disconnects</string>
+    <string name="rileylink_diag_gatt_timeouts">GATT timeouts</string>
+    <string name="rileylink_diag_writes_refused">Refused while link down</string>
+    <string name="rileylink_diag_version_slips">Version replies with a bit slip</string>
+    <string name="rileylink_diag_concurrent_init_peak">Most inits at once</string>
+    <string name="rileylink_diag_millis" comment="%1$d=a duration in milliseconds. Example: 32500 ms">%1$d ms</string>
+    <string name="rileylink_diag_since" comment="%1$s=a clock time, already formatted. Example: since 21:19">since %1$s</string>
+
 </resources>

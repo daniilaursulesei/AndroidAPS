@@ -26,7 +26,13 @@ import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkEncodingType
 import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkFirmwareVersion
 import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkFirmwareVersionBase
 import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkTargetFrequency
+import app.aaps.pump.common.hw.rileylink.ble.defs.usesV2Protocol
+import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
+import app.aaps.pump.common.hw.rileylink.diagnostics.SendAndListenDecoder
+import app.aaps.pump.common.hw.rileylink.diagnostics.VersionSource
+import app.aaps.pump.common.hw.rileylink.service.FirmwareVersionStore
 import app.aaps.pump.common.hw.rileylink.ble.operations.BLECommOperationResult
+import app.aaps.pump.common.hw.rileylink.keys.RileyLinkStringKey
 import app.aaps.pump.common.hw.rileylink.keys.RileyLinkStringPreferenceKey
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
 import org.apache.commons.lang3.ArrayUtils
@@ -50,7 +56,9 @@ class RFSpy(
     private val rileyLinkBle: RileyLinkBLE,
     private val rileyLinkServiceData: RileyLinkServiceData,
     private val rileyLinkUtil: RileyLinkUtil,
-    private val rfSpyResponseProvider: () -> RFSpyResponse
+    private val rfSpyResponseProvider: () -> RFSpyResponse,
+    private val diag: RileyLinkDiag,
+    private val firmwareVersionStore: FirmwareVersionStore
 ) {
 
     private val radioServiceUUID: UUID = UUID.fromString(GattAttributes.SERVICE_RADIO)
@@ -67,6 +75,12 @@ class RFSpy(
 
     fun getBLEVersionCached(): String = bleVersion ?: "UNKNOWN"
 
+    /** Replies sitting in the reader queue. For the diagnostics screen. */
+    val queuedResponses: Int get() = reader.queuedResponses
+
+    /** Notifications received but not yet read out. For the diagnostics screen. */
+    val pendingPermits: Int get() = reader.pendingPermits
+
     // Call this after the RL services are discovered.
     // Starts an async task to read when data is available
     fun startReader() {
@@ -77,18 +91,60 @@ class RFSpy(
     // Here should go generic RL initialisation + protocol adjustments depending on
     // firmware version
     fun initializeRileyLink() {
-        bleVersion = getVersion()
-        val cc1110Version = getCC1110Version()
-        rileyLinkServiceData.versionCC110 = cc1110Version
-        rileyLinkServiceData.firmwareVersion = getFirmwareVersion(aapsLogger, getBLEVersionCached(), cc1110Version)
+        val threadName = Thread.currentThread().name
+        diag.initEnter(threadName)
+        try {
+            bleVersion = getVersion()
+            val cc1110Version = getCC1110Version()
+            rileyLinkServiceData.versionCC110 = cc1110Version
 
-        aapsLogger.debug(
-            LTag.PUMPBTCOMM,
-            String.format(
-                "RileyLink - BLE Version: %s, CC1110 Version: %s, Firmware Version: %s",
-                bleVersion, cc1110Version, rileyLinkServiceData.firmwareVersion
+            val fromRadio = getFirmwareVersion(aapsLogger, getBLEVersionCached(), cc1110Version)
+            // The live address is cleared on a deliberate disconnect and is never set when the
+            // device reports no name, so fall back to the configured one. Without this the cache
+            // would quietly do nothing on exactly the reconnects it exists for.
+            val macAddress = rileyLinkServiceData.rileyLinkAddress?.takeIf { it.isNotBlank() }
+                ?: preferences.get(RileyLinkStringKey.MacAddress)
+
+            // The firmware is in flash and cannot have changed since the last good read, so a
+            // failed read is a failed measurement, not news. Prefer what this RileyLink already
+            // told us over a guess; only a device that has never answered falls back.
+            val resolved: RileyLinkFirmwareVersionBase
+            val source: VersionSource
+            if (fromRadio != RileyLinkFirmwareVersionBase.UnknownVersion) {
+                resolved = fromRadio
+                source = VersionSource.RADIO
+                firmwareVersionStore.put(macAddress, fromRadio)
+            } else {
+                val cached = firmwareVersionStore.get(macAddress)
+                if (cached != null) {
+                    resolved = cached
+                    source = VersionSource.CACHE
+                    aapsLogger.warn(
+                        LTag.PUMPBTCOMM,
+                        "Firmware Version could not be read. Using last known good version for $macAddress: $cached"
+                    )
+                } else {
+                    resolved = RileyLinkFirmwareVersionBase.UnknownVersion
+                    source = VersionSource.FALLBACK
+                    aapsLogger.warn(
+                        LTag.PUMPBTCOMM,
+                        "Firmware Version is unknown and nothing is stored for $macAddress. Using the version 2 command format."
+                    )
+                }
+            }
+            rileyLinkServiceData.firmwareVersion = resolved
+            diag.versionVerdict(resolved.name, source, cc1110Version, bleVersion)
+
+            aapsLogger.debug(
+                LTag.PUMPBTCOMM,
+                String.format(
+                    "RileyLink - BLE Version: %s, CC1110 Version: %s, Firmware Version: %s (%s)",
+                    bleVersion, cc1110Version, resolved, source
+                )
             )
-        )
+        } finally {
+            diag.initExit(threadName)
+        }
     }
 
     // Call this from the "response count" notification handler.
@@ -140,6 +196,7 @@ class RFSpy(
             val response = writeToDataRaw(getVersionRaw, 5000)
 
             aapsLogger.debug(LTag.PUMPBTCOMM, String.format(Locale.ENGLISH, "Firmware Version. GetVersion [response=%s]", shortHexString(response)))
+            diag.versionRead(response, response?.let { fromBytes(it) })
 
             if (response != null) { // && response[0] == (byte) 0xDD) {
 
@@ -190,7 +247,12 @@ class RFSpy(
     // The caller has to know how long the RFSpy will be busy with what was sent to it.
     private fun writeToData(command: RileyLinkCommand, responseTimeoutMs: Int): RFSpyResponse? {
         val bytes = command.getRaw()
+        val commandName = command.getCommandType().name
+        diag.tx(commandName, bytes, describeForRadio(bytes))
+
+        val startedAt = System.currentTimeMillis()
         val rawResponse = writeToDataRaw(bytes, responseTimeoutMs)
+        diag.rx(commandName, rawResponse, System.currentTimeMillis() - startedAt)
 
         if (rawResponse == null) {
             aapsLogger.error(LTag.PUMPBTCOMM, "writeToData: No response from RileyLink")
@@ -325,11 +387,31 @@ class RFSpy(
         }
     }
 
+    /**
+     * Describes a command the way the radio will read it, for the log and the diagnostics screen.
+     *
+     * A hex dump hides a format mismatch completely: the same bytes mean "listen 25 s" in one
+     * format and "listen 6 400 000 ms, 169 tries" in the other. When the format we built with and
+     * the format the radio uses disagree, both readings are printed, because that difference is
+     * the whole fault.
+     */
+    private fun describeForRadio(payload: ByteArray): String? {
+        val builtV2 = rileyLinkServiceData.firmwareVersion.usesV2Protocol()
+        val asBuilt = SendAndListenDecoder.decode(payload, builtV2) ?: return null
+        val text = "listen=${asBuilt.timeoutMs}ms retries=${asBuilt.retryCount} repeats=${asBuilt.repeatCount} busyUpTo=${asBuilt.busyMs}ms"
+        if (builtV2) return text
+        // Built with the old format. Show what a version 2 radio would make of the same bytes.
+        val asV2 = SendAndListenDecoder.decode(payload, true) ?: return text
+        return "$text | ifRadioIsV2: listen=${asV2.timeoutMs}ms retries=${asV2.retryCount} busyUpTo=${asV2.busyMs}ms"
+    }
+
     private fun setMedtronicEncoding() {
         var encoding = RileyLinkEncodingType.FourByteSixByteLocal
 
-        if (rileyLinkServiceData.firmwareVersion?.isSameVersion(RileyLinkFirmwareVersion.Version2AndHigher) == true
-        ) {
+        // Same version test as the packet format uses, so the encoder and the framing can never
+        // disagree. They used to be able to, which produced commands that were half one format and
+        // half the other.
+        if (rileyLinkServiceData.firmwareVersion.usesV2Protocol()) {
             if (preferences.get(RileyLinkStringPreferenceKey.Encoding) == RileyLinkEncodingType.FourByteSixByteRileyLink.key)
                 encoding = RileyLinkEncodingType.FourByteSixByteRileyLink
         }
@@ -355,6 +437,11 @@ class RFSpy(
             reader.setRileyLinkEncodingType(encoding)
             rileyLinkUtil.encoding = encoding
         }
+        diag.protocol(
+            v2 = rileyLinkServiceData.firmwareVersion.usesV2Protocol(),
+            encoding = encoding,
+            stopAtNull = !(encoding == RileyLinkEncodingType.Manchester || encoding == RileyLinkEncodingType.FourByteSixByteRileyLink)
+        )
 
         return resp
     }

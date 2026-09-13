@@ -129,6 +129,42 @@ class SendAndListenTest {
         assertEquals(0xD0.toByte(), raw[12]) // preamble low byte
     }
 
+    /**
+     * The case that caused radios to go silent for hours in the field.
+     *
+     * When the version read fails, the resolver produces UnknownVersion, not null. The old check
+     * only looked for null, so the "default to version 2" it documented never applied and the
+     * unknown case took the version 1 path instead. Against a version 2 radio that shifts every
+     * field after the delay: a 25 second listen is read as 6 400 000 ms with 169 retries, the
+     * radio stops answering, and only removing power ends it.
+     */
+    @Test
+    fun `getRaw with unknown firmware version uses v2 format`() {
+        whenever(rileyLinkServiceData.firmwareVersion).thenReturn(RileyLinkFirmwareVersionBase.UnknownVersion)
+
+        val command = SendAndListen(
+            rileyLinkServiceData = rileyLinkServiceData,
+            sendChannel = 0x00,
+            repeatCount = 0xC8.toByte(),
+            delayBetweenPacketsMs = 0,
+            listenChannel = 0x00,
+            timeoutMs = 25_000,
+            retryCount = 0x00,
+            packetToSend = radioPacket
+        )
+
+        val raw = command.getRaw()
+
+        // Version 2 header: cmd, sendChannel, repeatCount, delay(2), listenChannel, timeout(4),
+        // retryCount, preamble(2) = 13 bytes, then the packet.
+        assertEquals(RileyLinkCommandType.SendAndListen.code, raw[0])
+        assertEquals(13 + 3, raw.size)
+        // The timeout must land in bytes 6..9, where a version 2 radio reads it.
+        assertArrayEquals(byteArrayOf(0x00, 0x00, 0x61, 0xA8.toByte()), raw.copyOfRange(6, 10))
+        // Byte 10 is the retry count. Reading the version 1 layout here would find 0xA8 (168).
+        assertEquals(0x00.toByte(), raw[10])
+    }
+
     @Test
     fun `getRaw with null firmware version defaults to v2 format`() {
         whenever(rileyLinkServiceData.firmwareVersion).thenReturn(null)

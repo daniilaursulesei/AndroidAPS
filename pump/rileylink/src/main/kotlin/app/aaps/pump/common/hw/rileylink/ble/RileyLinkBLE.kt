@@ -32,6 +32,7 @@ import app.aaps.pump.common.hw.rileylink.ble.operations.CharacteristicWriteOpera
 import app.aaps.pump.common.hw.rileylink.ble.operations.DescriptorWriteOperation
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkError
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkServiceState
+import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
 import app.aaps.pump.common.hw.rileylink.keys.RileyLinkStringKey
 import app.aaps.pump.common.hw.rileylink.keys.RileylinkBooleanPreferenceKey
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
@@ -56,7 +57,8 @@ class RileyLinkBLE(
     private val rileyLinkUtil: RileyLinkUtil,
     private val preferences: Preferences,
     private val orangeLink: OrangeLinkImpl,
-    private val config: Config
+    private val config: Config,
+    private val diag: RileyLinkDiag
 ) {
 
     private val gattDebugEnabled = true
@@ -72,6 +74,9 @@ class RileyLinkBLE(
     private var radioResponseCountNotified: Runnable? = null
     var isConnected = false
         private set
+
+    /** True while a GATT read or write is in flight. For the diagnostics screen. */
+    val gattOperationBusy: Boolean get() = mCurrentOperation != null
 
     private fun isAnyRileyLinkServiceFound(service: BluetoothGattService): Boolean {
         val found = GattAttributes.isRileyLink(service.uuid)
@@ -214,6 +219,15 @@ class RileyLinkBLE(
             retValue.resultCode = BLECommOperationResult.RESULT_NOT_CONFIGURED
             return retValue
         }
+        if (!isConnected) {
+            // Fail now rather than start an operation the peer cannot answer. Without this the
+            // call waits the full GATT timeout, and while it waits it blocks the single RileyLink
+            // task thread, which is how a short radio dropout turns into minutes of dead time and
+            // a burst of queued-up work when the thread finally frees.
+            diag.writeRefusedLinkDown("setNotificationBlocking")
+            retValue.resultCode = BLECommOperationResult.RESULT_NOT_CONFIGURED
+            return retValue
+        }
         gattOperationSema.acquire()
         SystemClock.sleep(1) // attempting to yield thread, to make sequence of events easier to follow
         if (mCurrentOperation != null) retValue.resultCode = BLECommOperationResult.RESULT_BUSY
@@ -236,7 +250,10 @@ class RileyLinkBLE(
                         mCurrentOperation = DescriptorWriteOperation(aapsLogger, bluetoothConnectionGatt, list[0], BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
                         mCurrentOperation?.execute(this)
                         when {
-                            mCurrentOperation?.timedOut == true    -> retValue.resultCode = BLECommOperationResult.RESULT_TIMEOUT
+                            mCurrentOperation?.timedOut == true    -> {
+                                retValue.resultCode = BLECommOperationResult.RESULT_TIMEOUT
+                                diag.gattTimeout("setNotificationBlocking", (mCurrentOperation?.getGattOperationTimeout_ms() ?: 0).toLong())
+                            }
                             mCurrentOperation?.interrupted == true -> retValue.resultCode = BLECommOperationResult.RESULT_INTERRUPTED
                             else                                   -> retValue.resultCode = BLECommOperationResult.RESULT_SUCCESS
                         }
@@ -258,6 +275,15 @@ class RileyLinkBLE(
             return retValue
         }
         retValue.value = value
+        if (!isConnected) {
+            // Fail now rather than start an operation the peer cannot answer. Without this the
+            // call waits the full GATT timeout, and while it waits it blocks the single RileyLink
+            // task thread, which is how a short radio dropout turns into minutes of dead time and
+            // a burst of queued-up work when the thread finally frees.
+            diag.writeRefusedLinkDown("writeCharacteristicBlocking")
+            retValue.resultCode = BLECommOperationResult.RESULT_NOT_CONFIGURED
+            return retValue
+        }
         gattOperationSema.acquire()
         SystemClock.sleep(1) // attempting to yield thread, to make sequence of events easier to follow
         if (mCurrentOperation != null) retValue.resultCode = BLECommOperationResult.RESULT_BUSY
@@ -277,7 +303,10 @@ class RileyLinkBLE(
                     mCurrentOperation = CharacteristicWriteOperation(aapsLogger, bluetoothConnectionGatt, chara, value)
                     mCurrentOperation?.execute(this)
                     when {
-                        mCurrentOperation?.timedOut == true    -> retValue.resultCode = BLECommOperationResult.RESULT_TIMEOUT
+                        mCurrentOperation?.timedOut == true    -> {
+                            retValue.resultCode = BLECommOperationResult.RESULT_TIMEOUT
+                            diag.gattTimeout("writeCharacteristicBlocking", (mCurrentOperation?.getGattOperationTimeout_ms() ?: 0).toLong())
+                        }
                         mCurrentOperation?.interrupted == true -> retValue.resultCode = BLECommOperationResult.RESULT_INTERRUPTED
                         else                                   -> retValue.resultCode = BLECommOperationResult.RESULT_SUCCESS
                     }
@@ -297,6 +326,15 @@ class RileyLinkBLE(
             return retValue
         }
 
+        if (!isConnected) {
+            // Fail now rather than start an operation the peer cannot answer. Without this the
+            // call waits the full GATT timeout, and while it waits it blocks the single RileyLink
+            // task thread, which is how a short radio dropout turns into minutes of dead time and
+            // a burst of queued-up work when the thread finally frees.
+            diag.writeRefusedLinkDown("readCharacteristicBlocking")
+            retValue.resultCode = BLECommOperationResult.RESULT_NOT_CONFIGURED
+            return retValue
+        }
         gattOperationSema.acquire()
         SystemClock.sleep(1) // attempting to yield thread, to make sequence of events easier to follow
         if (mCurrentOperation != null) retValue.resultCode = BLECommOperationResult.RESULT_BUSY
@@ -312,7 +350,10 @@ class RileyLinkBLE(
                 mCurrentOperation = CharacteristicReadOperation(aapsLogger, bluetoothConnectionGatt!!, chara)
                 mCurrentOperation?.execute(this)
                 when {
-                    mCurrentOperation?.timedOut == true    -> retValue.resultCode = BLECommOperationResult.RESULT_TIMEOUT
+                    mCurrentOperation?.timedOut == true    -> {
+                        retValue.resultCode = BLECommOperationResult.RESULT_TIMEOUT
+                        diag.gattTimeout("readCharacteristicBlocking", (mCurrentOperation?.getGattOperationTimeout_ms() ?: 0).toLong())
+                    }
                     mCurrentOperation?.interrupted == true -> retValue.resultCode = BLECommOperationResult.RESULT_INTERRUPTED
 
                     else                                   -> {
@@ -397,9 +438,22 @@ class RileyLinkBLE(
                 } else if (newState == BluetoothProfile.STATE_CONNECTING || newState == BluetoothProfile.STATE_DISCONNECTING) {
                     aapsLogger.debug(LTag.PUMPBTCOMM, "We are in ${if (status == BluetoothProfile.STATE_CONNECTING) "Connecting" else "Disconnecting"} state.")
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    // The link is gone, so say so. This used to stay true after an unexpected drop,
+                    // which let every later operation be started against a dead connection and wait
+                    // out its full 22 second timeout instead of failing at once.
+                    isConnected = false
+                    val expected = manualDisconnect
                     rileyLinkUtil.sendBroadcastMessage(RileyLinkConst.Intents.RileyLinkDisconnected)
-                    if (manualDisconnect) close()
-                    aapsLogger.warn(LTag.PUMPBTCOMM, "RileyLink Disconnected.")
+                    // Only close the GATT client when we asked for the disconnect. On an unexpected
+                    // drop the client is what autoConnect uses to come back by itself, and nothing
+                    // else in the app starts a reconnect, so closing it here would leave the pump
+                    // unreachable until the user intervened.
+                    if (expected) {
+                        close()
+                        manualDisconnect = false
+                    }
+                    diag.linkDown(expected = expected, status = status, gattClosed = expected)
+                    aapsLogger.warn(LTag.PUMPBTCOMM, "RileyLink Disconnected. Expected: $expected")
                 } else {
                     aapsLogger.warn(LTag.PUMPBTCOMM, String.format(Locale.ENGLISH, "Some other state: (status=%d, newState=%d)", status, newState))
                 }
@@ -463,6 +517,7 @@ class RileyLinkBLE(
                     aapsLogger.info(LTag.PUMPBTCOMM, "Gatt device is RileyLink device: $rileyLinkFound")
                     if (rileyLinkFound) {
                         isConnected = true
+                        diag.linkUp()
                         rileyLinkUtil.sendBroadcastMessage(RileyLinkConst.Intents.RileyLinkReady)
                     } else {
                         isConnected = false

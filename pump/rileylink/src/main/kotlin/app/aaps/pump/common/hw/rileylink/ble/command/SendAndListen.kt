@@ -3,7 +3,7 @@ package app.aaps.pump.common.hw.rileylink.ble.command
 import app.aaps.core.utils.pump.ByteUtil
 import app.aaps.pump.common.hw.rileylink.ble.data.RadioPacket
 import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkCommandType
-import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkFirmwareVersion
+import app.aaps.pump.common.hw.rileylink.ble.defs.usesV2Protocol
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
 import java.nio.ByteBuffer
 
@@ -24,10 +24,12 @@ class SendAndListen(
     }
 
     override fun getRaw(): ByteArray {
-        // If firmware version is not set (error reading version from device, shouldn't happen),
-        // we will default to version 2
-
-        val isPacketV2 = rileyLinkServiceData.firmwareVersion == null || rileyLinkServiceData.firmwareVersion?.isSameVersion(RileyLinkFirmwareVersion.Version2AndHigher) == true
+        // An unread or unrecognised firmware version must default to version 2. The old check only
+        // caught a null, which the version resolver never produces - it returns UnknownVersion -
+        // so the documented default never applied and the unknown case silently took the version 1
+        // path instead. See usesV2Protocol for why guessing wrong in that direction is the costly
+        // one.
+        val isPacketV2 = rileyLinkServiceData.firmwareVersion.usesV2Protocol()
 
         val bytes = ArrayList<Byte>()
         bytes.add(this.getCommandType().code)

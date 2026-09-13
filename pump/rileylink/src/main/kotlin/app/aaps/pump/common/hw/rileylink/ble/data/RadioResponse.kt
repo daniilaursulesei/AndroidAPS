@@ -10,7 +10,7 @@ import app.aaps.pump.common.hw.rileylink.ble.command.RileyLinkCommand
 import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkBLEError
 import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkCommandType
 import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkEncodingType
-import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkFirmwareVersion
+import app.aaps.pump.common.hw.rileylink.ble.defs.usesV2Protocol
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
 import app.aaps.pump.common.utils.CRC
 import org.apache.commons.lang3.NotImplementedException
@@ -62,7 +62,9 @@ class RadioResponse(
         }
         var encodedPayload: ByteArray?
 
-        if (rileyLinkServiceData.firmwareVersion?.isSameVersion(RileyLinkFirmwareVersion.Version2AndHigher) == true) {
+        // Must agree with the format the command was built in, or the reply is unpacked at the
+        // wrong offset. Both sides ask usesV2Protocol so they cannot drift apart.
+        if (rileyLinkServiceData.firmwareVersion.usesV2Protocol()) {
             encodedPayload = substring(rxData, 3, rxData.size - 3)
             rssi = rxData[1].toInt()
             responseNumber = rxData[2].toInt()

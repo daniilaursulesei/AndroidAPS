@@ -25,6 +25,17 @@ class RFSpyReader internal constructor(private val aapsLogger: AAPSLogger, priva
     private var acquireCount = 0
     private var releaseCount = 0
     private var stopAtNull = true
+
+    /** Replies waiting to be read. Anything above zero when idle means a reply lost its owner. */
+    val queuedResponses: Int get() = mDataQueue.size
+
+    /**
+     * Notifications that arrived but have not been read out yet.
+     *
+     * Each one makes the reader thread do one more read of the radio data characteristic. A count
+     * that keeps growing means the reader and the radio are out of step.
+     */
+    val pendingPermits: Int get() = waitForRadioData.availablePermits()
     fun setRileyLinkEncodingType(encodingType: RileyLinkEncodingType) {
         aapsLogger.debug("setRileyLinkEncodingType: $encodingType")
         stopAtNull = !(encodingType == RileyLinkEncodingType.Manchester || encodingType == RileyLinkEncodingType.FourByteSixByteRileyLink)
