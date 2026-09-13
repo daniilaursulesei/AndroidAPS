@@ -126,8 +126,8 @@ class RileyLinkDiag(
         val body = pairs.joinToString("|") { (k, v) -> "$k=$v" }
         val line = if (body.isEmpty()) "RLDIAG|$event" else "RLDIAG|$event|$body"
         when (severity) {
-            DiagSeverity.INFO -> aapsLogger.debug(LTag.PUMPBTCOMM, line)
-            DiagSeverity.WARN -> aapsLogger.warn(LTag.PUMPBTCOMM, line)
+            DiagSeverity.INFO -> aapsLogger.debug(LTag.RLDIAG, line)
+            DiagSeverity.WARN -> aapsLogger.warn(LTag.RLDIAG, line)
         }
         val entry = RileyLinkDiagEvent(System.currentTimeMillis(), event, body, severity)
         _snapshot.update { it.copy(events = (listOf(entry) + it.events).take(EVENT_HISTORY)) }
@@ -206,9 +206,16 @@ class RileyLinkDiag(
 
     // region traffic
 
-    /** A command about to be written to the radio. [detail] carries the decoded fields. */
+    /**
+     * A command about to be written to the radio.
+     *
+     * @param v2 the wire format the command was built in. Logged as its own field so the whole
+     *   point of this work - that no version 1 command is ever emitted to a version 2 radio - can
+     *   be checked with one search, without needing the raw Bluetooth trace switched on.
+     * @param detail the decoded fields, as the radio will read them.
+     */
     @Synchronized
-    fun tx(name: String, payload: ByteArray, detail: String?) {
+    fun tx(name: String, payload: ByteArray, v2: Boolean, detail: String?) {
         _snapshot.update {
             it.copy(
                 lastCommandName = name,
@@ -217,7 +224,10 @@ class RileyLinkDiag(
                 lastCommandAtMillis = System.currentTimeMillis()
             )
         }
-        mark("TX", "op" to name, "len" to payload.size, "detail" to (detail ?: "-"), "hex" to ByteUtil.shortHexString(payload))
+        mark(
+            "TX", "op" to name, "fmt" to if (v2) "v2" else "v1", "len" to payload.size,
+            "detail" to (detail ?: "-"), "hex" to ByteUtil.shortHexString(payload)
+        )
     }
 
     /**

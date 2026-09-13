@@ -248,7 +248,7 @@ class RFSpy(
     private fun writeToData(command: RileyLinkCommand, responseTimeoutMs: Int): RFSpyResponse? {
         val bytes = command.getRaw()
         val commandName = command.getCommandType().name
-        diag.tx(commandName, bytes, describeForRadio(bytes))
+        diag.tx(commandName, bytes, rileyLinkServiceData.firmwareVersion.usesV2Protocol(), describeForRadio(bytes))
 
         val startedAt = System.currentTimeMillis()
         val rawResponse = writeToDataRaw(bytes, responseTimeoutMs)

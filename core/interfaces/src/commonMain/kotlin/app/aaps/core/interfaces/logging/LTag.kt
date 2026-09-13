@@ -25,6 +25,9 @@ enum class LTag(val tag: String, val defaultValue: Boolean = true, val requiresR
     PUMPEMULATOR("PUMPEMULATOR", defaultValue = false),
     PUMPQUEUE("PUMPQUEUE"),
     PROFILE("PROFILE"),
+    // RileyLink diagnostics. Its own tag rather than part of PUMPBTCOMM so the short summary can be
+    // kept while the very large raw Bluetooth trace is turned off.
+    RLDIAG("RLDIAG"),
     SMS("SMS"),
     TIDEPOOL("TIDEPOOL"),
     UI("UI", defaultValue = false),
