@@ -18,6 +18,7 @@ import app.aaps.pump.common.hw.rileylink.defs.RileyLinkServiceState
 import app.aaps.pump.common.hw.rileylink.ble.RFSpy
 import app.aaps.pump.common.hw.rileylink.ble.RileyLinkBLE
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
+import app.aaps.pump.common.hw.rileylink.service.FirmwareVersionStore
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
 import app.aaps.pump.common.hw.rileylink.service.tasks.ResetRileyLinkConfigurationTask
 import app.aaps.pump.common.hw.rileylink.service.tasks.ServiceTaskExecutor
@@ -74,6 +75,7 @@ internal class MedtronicOverviewViewModelTest {
     private val wakeTaskProvider: () -> WakeAndTuneTask = mock()
     private val rfSpy: RFSpy = mock()
     private val rileyLinkBLE: RileyLinkBLE = mock()
+    private val firmwareVersionStore: FirmwareVersionStore = mock()
 
     @BeforeEach
     fun setUp() {
@@ -128,7 +130,7 @@ internal class MedtronicOverviewViewModelTest {
     private fun createViewModel() = MedtronicOverviewViewModel(
         rh, ch, medtronicPumpPlugin, medtronicPumpStatus, medtronicUtil, rileyLinkServiceData,
         serviceTaskExecutor, commandQueue, rxBus, dateUtil, aapsLogger, resetTaskProvider,
-        wakeTaskProvider, context, RileyLinkDiag(aapsLogger), rfSpy, rileyLinkBLE
+        wakeTaskProvider, context, RileyLinkDiag(aapsLogger), rfSpy, rileyLinkBLE, firmwareVersionStore
     )
 
     @Test

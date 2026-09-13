@@ -127,5 +127,6 @@
     <string name="rileylink_diag_events_empty">Nothing recorded yet</string>
     <string name="rileylink_diag_copy">Copy diagnostics</string>
     <string name="rileylink_diag_copied">Diagnostics copied to clipboard</string>
+    <string name="rileylink_diag_cached_firmware">Stored for this device</string>
 
 </resources>

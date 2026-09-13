@@ -33,11 +33,11 @@ class FirmwareVersionStore(
      * @param macAddress the RileyLink this connection is for. A blank address never matches.
      */
     fun get(macAddress: String?): RileyLinkFirmwareVersionBase? {
-        if (macAddress.isNullOrBlank()) return null
+        val mac = resolve(macAddress) ?: return null
         val stored = preferences.get(RileyLinkStringKey.FirmwareVersionCache)
         val parts = stored.split(SEPARATOR)
         if (parts.size != 2) return null
-        if (!parts[0].equals(macAddress, ignoreCase = true)) return null
+        if (!parts[0].equals(mac, ignoreCase = true)) return null
         val version = RileyLinkFirmwareVersionBase.byVersionString(parts[1]) ?: return null
         return if (version == RileyLinkFirmwareVersionBase.UnknownVersion) null else version
     }
@@ -50,10 +50,21 @@ class FirmwareVersionStore(
      * [RileyLinkFirmwareVersionBase.UnknownVersion] and a blank address are ignored.
      */
     fun put(macAddress: String?, version: RileyLinkFirmwareVersionBase) {
-        if (macAddress.isNullOrBlank()) return
+        val mac = resolve(macAddress) ?: return
         if (version == RileyLinkFirmwareVersionBase.UnknownVersion) return
-        preferences.put(RileyLinkStringKey.FirmwareVersionCache, "$macAddress$SEPARATOR${version.versionKey}")
+        preferences.put(RileyLinkStringKey.FirmwareVersionCache, "$mac$SEPARATOR${version.versionKey}")
     }
+
+    /**
+     * The address to key the cache on.
+     *
+     * The live address is cleared on a deliberate disconnect and is never set when the device
+     * reports no name, so it falls back to the configured one. Doing this here rather than at each
+     * call site keeps the read and the write agreeing on which device they are talking about.
+     */
+    private fun resolve(macAddress: String?): String? =
+        macAddress?.takeIf { it.isNotBlank() }
+            ?: preferences.get(RileyLinkStringKey.MacAddress).takeIf { it.isNotBlank() }
 
     companion object {
 

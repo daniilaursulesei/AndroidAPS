@@ -39,6 +39,7 @@ import app.aaps.pump.common.hw.rileylink.defs.RileyLinkTargetDevice
 import app.aaps.pump.common.hw.rileylink.diagnostics.DiagSeverity
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiagSnapshot
+import app.aaps.pump.common.hw.rileylink.service.FirmwareVersionStore
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
 import app.aaps.pump.common.hw.rileylink.service.tasks.ResetRileyLinkConfigurationTask
 import app.aaps.pump.common.hw.rileylink.service.tasks.ServiceTaskExecutor
@@ -97,7 +98,8 @@ class MedtronicOverviewViewModel(
     private val context: Context,
     private val rileyLinkDiag: RileyLinkDiag,
     private val rfSpy: RFSpy,
-    private val rileyLinkBLE: RileyLinkBLE
+    private val rileyLinkBLE: RileyLinkBLE,
+    private val firmwareVersionStore: FirmwareVersionStore
 ) : ViewModel() {
 
     companion object {
@@ -166,6 +168,7 @@ class MedtronicOverviewViewModel(
             silentSince = snapshot.silentSinceMillis?.let { dateUtil.timeString(it) },
             firmwareVersion = snapshot.firmwareVersion,
             versionSource = snapshot.versionSource,
+            cachedFirmware = firmwareVersionStore.get(rileyLinkServiceData.rileyLinkAddress)?.name,
             protocolFormat = if (snapshot.protocolV2) PROTOCOL_V2 else PROTOCOL_V1,
             encoding = snapshot.encoding?.name,
             lastCommandName = snapshot.lastCommandName,

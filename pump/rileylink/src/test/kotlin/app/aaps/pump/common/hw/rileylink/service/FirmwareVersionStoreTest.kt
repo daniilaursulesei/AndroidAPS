@@ -25,6 +25,7 @@ class FirmwareVersionStoreTest {
         preferences = mock()
         store = FirmwareVersionStore(preferences)
         whenever(preferences.get(RileyLinkStringKey.FirmwareVersionCache)).thenReturn("")
+        whenever(preferences.get(RileyLinkStringKey.MacAddress)).thenReturn("")
     }
 
     private fun stored(value: String) {
@@ -52,6 +53,23 @@ class FirmwareVersionStoreTest {
         assertNull(store.get(""))
     }
 
+    /**
+     * The live address is cleared on a deliberate disconnect, which is one of the moments the cache
+     * exists for. Falling back to the configured address keeps it working then.
+     */
+    @Test fun `falls back to the configured address when the live one is missing`() {
+        whenever(preferences.get(RileyLinkStringKey.MacAddress)).thenReturn(mac)
+        stored("$mac|2.2")
+        assertEquals(RileyLinkFirmwareVersionBase.Version_2_2, store.get(null))
+        assertEquals(RileyLinkFirmwareVersionBase.Version_2_2, store.get(""))
+    }
+
+    @Test fun `stores against the configured address when the live one is missing`() {
+        whenever(preferences.get(RileyLinkStringKey.MacAddress)).thenReturn(mac)
+        store.put(null, RileyLinkFirmwareVersionBase.Version_2_2)
+        verify(preferences).put(RileyLinkStringKey.FirmwareVersionCache, "$mac|2.2")
+    }
+
     @Test fun `ignores a stored value it cannot read`() {
         stored("nonsense")
         assertNull(store.get(mac))
@@ -70,7 +88,7 @@ class FirmwareVersionStoreTest {
         verify(preferences, never()).put(eq(RileyLinkStringKey.FirmwareVersionCache), any<String>())
     }
 
-    @Test fun `never stores without a device address`() {
+    @Test fun `never stores when no address is known at all`() {
         store.put(null, RileyLinkFirmwareVersionBase.Version_2_2)
         store.put("", RileyLinkFirmwareVersionBase.Version_2_2)
         verify(preferences, never()).put(eq(RileyLinkStringKey.FirmwareVersionCache), any<String>())

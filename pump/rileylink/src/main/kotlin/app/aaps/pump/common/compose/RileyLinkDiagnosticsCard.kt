@@ -50,6 +50,7 @@ data class RileyLinkDiagnosticsUiState(
     val silentSince: String?,
     val firmwareVersion: String?,
     val versionSource: VersionSource,
+    val cachedFirmware: String?,
     val protocolFormat: String,
     val encoding: String?,
     val lastCommandName: String?,
@@ -173,6 +174,10 @@ fun RileyLinkDiagnosticsCard(
                     VersionSource.NONE     -> stringResource(R.string.rileylink_diag_source_none)
                 }
             )
+            ValueRow(
+                stringResource(R.string.rileylink_diag_cached_firmware),
+                state.cachedFirmware ?: stringResource(R.string.rileylink_diag_none)
+            )
             if (state.versionSource == VersionSource.FALLBACK) {
                 Text(
                     text = stringResource(R.string.rileylink_diag_fallback_warning),
@@ -283,6 +288,7 @@ private fun buildPlainText(state: RileyLinkDiagnosticsUiState): String = buildSt
     appendLine("BLE113: ${state.ble113Version ?: if (state.linkUp) "connected" else "not connected"}")
     appendLine("CC1110: ${state.chipState}" + if (state.chipState == ChipState.SILENT) " (${state.silentStreak} unanswered, since ${state.silentSince})" else "")
     appendLine("Firmware: ${state.firmwareVersion ?: "-"} (source ${state.versionSource})")
+    appendLine("Stored for this device: ${state.cachedFirmware ?: "none"}")
     appendLine("Command format: ${state.protocolFormat}   Encoding: ${state.encoding ?: "-"}")
     appendLine()
     appendLine("Last command (${state.lastCommandAt ?: "-"}): ${state.lastCommandName ?: "-"} ${state.lastCommandHex ?: ""}")

@@ -32,7 +32,6 @@ import app.aaps.pump.common.hw.rileylink.diagnostics.SendAndListenDecoder
 import app.aaps.pump.common.hw.rileylink.diagnostics.VersionSource
 import app.aaps.pump.common.hw.rileylink.service.FirmwareVersionStore
 import app.aaps.pump.common.hw.rileylink.ble.operations.BLECommOperationResult
-import app.aaps.pump.common.hw.rileylink.keys.RileyLinkStringKey
 import app.aaps.pump.common.hw.rileylink.keys.RileyLinkStringPreferenceKey
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
 import org.apache.commons.lang3.ArrayUtils
@@ -99,11 +98,9 @@ class RFSpy(
             rileyLinkServiceData.versionCC110 = cc1110Version
 
             val fromRadio = getFirmwareVersion(aapsLogger, getBLEVersionCached(), cc1110Version)
-            // The live address is cleared on a deliberate disconnect and is never set when the
-            // device reports no name, so fall back to the configured one. Without this the cache
-            // would quietly do nothing on exactly the reconnects it exists for.
-            val macAddress = rileyLinkServiceData.rileyLinkAddress?.takeIf { it.isNotBlank() }
-                ?: preferences.get(RileyLinkStringKey.MacAddress)
+            // FirmwareVersionStore falls back to the configured address when the live one is
+            // missing, so both the read and the write below agree on which device they mean.
+            val macAddress = rileyLinkServiceData.rileyLinkAddress
 
             // The firmware is in flash and cannot have changed since the last good read, so a
             // failed read is a failed measurement, not news. Prefer what this RileyLink already
