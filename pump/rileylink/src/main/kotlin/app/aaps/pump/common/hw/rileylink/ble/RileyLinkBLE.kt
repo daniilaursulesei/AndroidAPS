@@ -32,6 +32,8 @@ import app.aaps.pump.common.hw.rileylink.ble.operations.CharacteristicWriteOpera
 import app.aaps.pump.common.hw.rileylink.ble.operations.DescriptorWriteOperation
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkError
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkServiceState
+import app.aaps.pump.common.hw.rileylink.diagnostics.FaultInjector
+import app.aaps.pump.common.hw.rileylink.diagnostics.InjectableFault
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
 import app.aaps.pump.common.hw.rileylink.keys.RileyLinkStringKey
 import app.aaps.pump.common.hw.rileylink.keys.RileylinkBooleanPreferenceKey
@@ -58,7 +60,8 @@ class RileyLinkBLE(
     private val preferences: Preferences,
     private val orangeLink: OrangeLinkImpl,
     private val config: Config,
-    private val diag: RileyLinkDiag
+    private val diag: RileyLinkDiag,
+    private val faultInjector: FaultInjector
 ) {
 
     private val gattDebugEnabled = true
@@ -219,7 +222,7 @@ class RileyLinkBLE(
             retValue.resultCode = BLECommOperationResult.RESULT_NOT_CONFIGURED
             return retValue
         }
-        if (!isConnected) {
+        if (!isConnected || faultInjector.consume(InjectableFault.LINK_DROPS)) {
             // Fail now rather than start an operation the peer cannot answer. Without this the
             // call waits the full GATT timeout, and while it waits it blocks the single RileyLink
             // task thread, which is how a short radio dropout turns into minutes of dead time and
@@ -275,7 +278,7 @@ class RileyLinkBLE(
             return retValue
         }
         retValue.value = value
-        if (!isConnected) {
+        if (!isConnected || faultInjector.consume(InjectableFault.LINK_DROPS)) {
             // Fail now rather than start an operation the peer cannot answer. Without this the
             // call waits the full GATT timeout, and while it waits it blocks the single RileyLink
             // task thread, which is how a short radio dropout turns into minutes of dead time and
@@ -326,7 +329,7 @@ class RileyLinkBLE(
             return retValue
         }
 
-        if (!isConnected) {
+        if (!isConnected || faultInjector.consume(InjectableFault.LINK_DROPS)) {
             // Fail now rather than start an operation the peer cannot answer. Without this the
             // call waits the full GATT timeout, and while it waits it blocks the single RileyLink
             // task thread, which is how a short radio dropout turns into minutes of dead time and

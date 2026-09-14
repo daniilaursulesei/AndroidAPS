@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.HorizontalDivider
@@ -29,6 +30,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import app.aaps.core.ui.compose.AapsCard
 import app.aaps.core.ui.compose.AapsSpacing
 import app.aaps.core.ui.compose.AapsTheme
@@ -69,7 +71,9 @@ data class RileyLinkDiagnosticsUiState(
     val writesRefused: Int,
     val versionSlips: Int,
     val concurrentInitPeak: Int,
-    val events: List<DiagEventLine>
+    val events: List<DiagEventLine>,
+    /** Name of the fault armed for testing, or null. Drives the warning banner. */
+    val armedFault: String?
 )
 
 /**
@@ -130,6 +134,30 @@ fun RileyLinkDiagnosticsCard(
                 }
             }
             HorizontalDivider()
+
+            // Test mode changes how the app behaves, so it must never be possible to look at this
+            // card and not know it is on.
+            state.armedFault?.let { fault ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(AapsTheme.generalColors.statusCritical, RoundedCornerShape(AapsSpacing.small))
+                        .padding(AapsSpacing.medium),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.rileylink_diag_test_armed, fault),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onError
+                    )
+                    Text(
+                        text = stringResource(R.string.rileylink_diag_test_armed_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onError
+                    )
+                }
+            }
 
             StatusRow(
                 label = stringResource(R.string.rileylink_diag_ble113),
@@ -285,6 +313,7 @@ fun RileyLinkDiagnosticsCard(
  */
 private fun buildPlainText(state: RileyLinkDiagnosticsUiState): String = buildString {
     appendLine("RileyLink diagnostics")
+    state.armedFault?.let { appendLine("TEST MODE ARMED: $it") }
     appendLine("BLE113: ${state.ble113Version ?: if (state.linkUp) "connected" else "not connected"}")
     appendLine("CC1110: ${state.chipState}" + if (state.chipState == ChipState.SILENT) " (${state.silentStreak} unanswered, since ${state.silentSince})" else "")
     appendLine("Firmware: ${state.firmwareVersion ?: "-"} (source ${state.versionSource})")

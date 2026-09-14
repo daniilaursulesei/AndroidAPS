@@ -5,8 +5,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.SettingsInputAntenna
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.runtime.Stable
@@ -17,6 +19,7 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.pump.PumpInsulin
 import app.aaps.core.interfaces.pump.PumpRate
+import app.aaps.core.interfaces.queue.Command
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.bus.RxBus
@@ -29,6 +32,7 @@ import app.aaps.core.ui.compose.pump.PumpInfoRow
 import app.aaps.core.ui.compose.pump.PumpOverviewUiState
 import app.aaps.core.ui.compose.pump.tickerFlow
 import app.aaps.pump.common.compose.DiagEventLine
+import app.aaps.pump.common.compose.DiagnosisUiState
 import app.aaps.pump.common.compose.RileyLinkDiagnosticsUiState
 import app.aaps.pump.common.events.EventRileyLinkDeviceStatusChange
 import app.aaps.pump.common.extensions.stringResource
@@ -37,6 +41,10 @@ import app.aaps.pump.common.hw.rileylink.ble.RileyLinkBLE
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkServiceState
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkTargetDevice
 import app.aaps.pump.common.hw.rileylink.diagnostics.DiagSeverity
+import app.aaps.pump.common.hw.rileylink.diagnostics.FaultInjector
+import app.aaps.pump.common.hw.rileylink.diagnostics.InjectableFault
+import app.aaps.pump.common.hw.rileylink.diagnostics.RepairAction
+import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkSelfTest
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiagSnapshot
 import app.aaps.pump.common.hw.rileylink.service.FirmwareVersionStore
@@ -59,6 +67,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.Locale
 import dev.zacsweers.metro.AppScope
@@ -75,6 +85,7 @@ sealed class MedtronicOverviewEvent {
     data object ShowRileyLinkStats : MedtronicOverviewEvent()
     data class ShowDialog(val title: String, val message: String) : MedtronicOverviewEvent()
     data class ShowSnackbar(val message: String) : MedtronicOverviewEvent()
+    data object ShowTestModeWarning : MedtronicOverviewEvent()
 }
 
 @Stable
@@ -99,7 +110,9 @@ class MedtronicOverviewViewModel(
     private val rileyLinkDiag: RileyLinkDiag,
     private val rfSpy: RFSpy,
     private val rileyLinkBLE: RileyLinkBLE,
-    private val firmwareVersionStore: FirmwareVersionStore
+    private val firmwareVersionStore: FirmwareVersionStore,
+    private val selfTest: RileyLinkSelfTest,
+    private val faultInjector: FaultInjector
 ) : ViewModel() {
 
     companion object {
@@ -189,6 +202,7 @@ class MedtronicOverviewViewModel(
             writesRefused = snapshot.writesWhileLinkDown,
             versionSlips = snapshot.versionSlipsSeen,
             concurrentInitPeak = snapshot.concurrentInitPeak,
+            armedFault = faultInjector.armed.value?.title,
             events = snapshot.events.map { event ->
                 DiagEventLine(
                     time = dateUtil.timeStringWithSeconds(event.atMillis),
@@ -197,6 +211,57 @@ class MedtronicOverviewViewModel(
                 )
             }
         )
+
+    private val _diagnosis = MutableStateFlow(DiagnosisUiState())
+
+    /** State of the connection check dialog. Null report means it has not been run yet. */
+    val diagnosis: StateFlow<DiagnosisUiState> = _diagnosis
+
+    /**
+     * Runs the connection check.
+     *
+     * Refused while a bolus is being delivered: the check talks to the radio, and nothing should
+     * compete with insulin already on its way. Every other queue state is allowed, because a stuck
+     * queue is exactly the situation this is for.
+     */
+    fun runDiagnosis() {
+        if (commandQueue.isRunning(Command.CommandType.BOLUS)) {
+            _events.tryEmit(MedtronicOverviewEvent.ShowSnackbar(rh.gs(RileyLinkR.string.rileylink_diag_busy_bolus)))
+            return
+        }
+        _diagnosis.update { it.copy(running = true, repairResults = emptyList()) }
+        viewModelScope.launch(Dispatchers.IO) {
+            val report = selfTest.run()
+            _diagnosis.update { it.copy(running = false, report = report) }
+        }
+    }
+
+    /** Carries out one of the repairs the check suggested, then leaves the result on screen. */
+    fun runRepair(action: RepairAction) {
+        _diagnosis.update { it.copy(runningRepair = action) }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = selfTest.repair(action)
+            _diagnosis.update { it.copy(runningRepair = null, repairResults = it.repairResults + result) }
+        }
+    }
+
+    fun dismissDiagnosis() {
+        _diagnosis.value = DiagnosisUiState()
+    }
+
+    /** Opens test mode, which always starts with the detach-the-pump warning. */
+    fun openTestMode() {
+        _events.tryEmit(MedtronicOverviewEvent.ShowTestModeWarning)
+    }
+
+    fun armFault(fault: InjectableFault) {
+        faultInjector.arm(fault)
+        _events.tryEmit(MedtronicOverviewEvent.ShowSnackbar(fault.title))
+    }
+
+    fun disarmFault() {
+        faultInjector.disarm()
+    }
 
     private fun buildUiState(): PumpOverviewUiState {
         return PumpOverviewUiState(
@@ -432,6 +497,18 @@ class MedtronicOverviewViewModel(
                     medtronicPumpPlugin.clearBusyTimestamps()
                     _events.tryEmit(MedtronicOverviewEvent.ShowSnackbar(rh.gs(R.string.medtronic_custom_action_clear_bolus_block)))
                 }
+            ),
+            PumpAction(
+                label = rh.gs(RileyLinkR.string.rileylink_diag_run_check),
+                icon = Icons.Filled.MonitorHeart,
+                category = ActionCategory.MANAGEMENT,
+                onClick = { runDiagnosis() }
+            ),
+            PumpAction(
+                label = rh.gs(RileyLinkR.string.rileylink_diag_test_mode),
+                icon = Icons.Filled.Science,
+                category = ActionCategory.MANAGEMENT,
+                onClick = { openTestMode() }
             ),
             PumpAction(
                 label = rh.gs(R.string.medtronic_custom_action_reset_rileylink),

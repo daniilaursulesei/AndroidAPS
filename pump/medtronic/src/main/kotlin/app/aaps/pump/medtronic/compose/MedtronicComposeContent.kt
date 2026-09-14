@@ -35,7 +35,10 @@ import app.aaps.core.ui.compose.ToolbarConfig
 import app.aaps.core.ui.compose.dialogs.OkDialog
 import app.aaps.core.ui.compose.pump.BlePreCheckHost
 import app.aaps.core.ui.compose.pump.PumpOverviewScreen
+import app.aaps.pump.common.compose.RileyLinkDiagnosisDialog
 import app.aaps.pump.common.compose.RileyLinkDiagnosticsCard
+import app.aaps.pump.common.compose.RileyLinkTestModePickerDialog
+import app.aaps.pump.common.compose.RileyLinkTestModeWarningDialog
 import app.aaps.pump.common.compose.RileyLinkPairWizardEvent
 import app.aaps.pump.common.compose.RileyLinkPairWizardScreen
 import app.aaps.pump.common.compose.RileyLinkPairWizardViewModel
@@ -66,6 +69,8 @@ class MedtronicComposeContent(
 
         // Dialog state
         var showDialog by remember { mutableStateOf(false) }
+        var showTestModeWarning by remember { mutableStateOf(false) }
+        var showTestModePicker by remember { mutableStateOf(false) }
         var dialogTitle by remember { mutableStateOf("") }
         var dialogMessage by remember { mutableStateOf("") }
 
@@ -130,6 +135,10 @@ class MedtronicComposeContent(
                     is MedtronicOverviewEvent.ShowSnackbar            -> {
                         snackbarHostState.showSnackbar(event.message)
                     }
+
+                    is MedtronicOverviewEvent.ShowTestModeWarning     -> {
+                        showTestModeWarning = true
+                    }
                 }
             }
         }
@@ -137,6 +146,36 @@ class MedtronicComposeContent(
         // Dialog
         if (showDialog) {
             OkDialog(title = dialogTitle, message = dialogMessage, onDismiss = { showDialog = false })
+        }
+
+        val diagnosisState by overviewViewModel.diagnosis.collectAsStateWithLifecycle()
+        if (diagnosisState.running || diagnosisState.report != null) {
+            RileyLinkDiagnosisDialog(
+                state = diagnosisState,
+                onRepair = overviewViewModel::runRepair,
+                onRecheck = overviewViewModel::runDiagnosis,
+                onDismiss = overviewViewModel::dismissDiagnosis
+            )
+        }
+
+        // Test mode is always reached through the warning, never straight from the button.
+        if (showTestModeWarning) {
+            RileyLinkTestModeWarningDialog(
+                onConfirm = {
+                    showTestModeWarning = false
+                    showTestModePicker = true
+                },
+                onDismiss = { showTestModeWarning = false }
+            )
+        }
+        if (showTestModePicker) {
+            RileyLinkTestModePickerDialog(
+                onArm = { fault ->
+                    overviewViewModel.armFault(fault)
+                    showTestModePicker = false
+                },
+                onDismiss = { showTestModePicker = false }
+            )
         }
 
         // Content

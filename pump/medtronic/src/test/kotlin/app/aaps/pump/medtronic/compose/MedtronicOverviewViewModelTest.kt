@@ -17,7 +17,9 @@ import app.aaps.pump.common.events.EventRileyLinkDeviceStatusChange
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkServiceState
 import app.aaps.pump.common.hw.rileylink.ble.RFSpy
 import app.aaps.pump.common.hw.rileylink.ble.RileyLinkBLE
+import app.aaps.pump.common.hw.rileylink.diagnostics.FaultInjector
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
+import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkSelfTest
 import app.aaps.pump.common.hw.rileylink.service.FirmwareVersionStore
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
 import app.aaps.pump.common.hw.rileylink.service.tasks.ResetRileyLinkConfigurationTask
@@ -76,6 +78,7 @@ internal class MedtronicOverviewViewModelTest {
     private val rfSpy: RFSpy = mock()
     private val rileyLinkBLE: RileyLinkBLE = mock()
     private val firmwareVersionStore: FirmwareVersionStore = mock()
+    private val selfTest: RileyLinkSelfTest = mock()
 
     @BeforeEach
     fun setUp() {
@@ -118,6 +121,8 @@ internal class MedtronicOverviewViewModelTest {
         whenever(rh.gs(R.string.medtronic_custom_action_wake_and_tune)).thenReturn("Wake and tune")
         whenever(rh.gs(R.string.medtronic_custom_action_clear_bolus_block)).thenReturn("Clear bolus block")
         whenever(rh.gs(R.string.medtronic_custom_action_reset_rileylink)).thenReturn("Reset RileyLink")
+        whenever(rh.gs(RileyLinkR.string.rileylink_diag_run_check)).thenReturn("Check connection")
+        whenever(rh.gs(RileyLinkR.string.rileylink_diag_test_mode)).thenReturn("Test mode")
         whenever(rh.gs(CoreUiR.string.battery_label)).thenReturn("Battery")
         whenever(rh.gs(CoreUiR.string.reservoir_label)).thenReturn("Reservoir")
     }
@@ -130,7 +135,7 @@ internal class MedtronicOverviewViewModelTest {
     private fun createViewModel() = MedtronicOverviewViewModel(
         rh, ch, medtronicPumpPlugin, medtronicPumpStatus, medtronicUtil, rileyLinkServiceData,
         serviceTaskExecutor, commandQueue, rxBus, dateUtil, aapsLogger, resetTaskProvider,
-        wakeTaskProvider, context, RileyLinkDiag(aapsLogger), rfSpy, rileyLinkBLE, firmwareVersionStore
+        wakeTaskProvider, context, RileyLinkDiag(aapsLogger), rfSpy, rileyLinkBLE, firmwareVersionStore, selfTest, FaultInjector(aapsLogger)
     )
 
     @Test
@@ -142,7 +147,10 @@ internal class MedtronicOverviewViewModelTest {
         assertThat(state.infoRows.filterIsInstance<PumpInfoRow>()).isNotEmpty()
         assertThat(state.primaryActions.map { it.label }).containsExactly("Refresh")
         assertThat(state.managementActions.map { it.label })
-            .containsExactly("Pair", "History", "Statistics", "Wake and tune", "Clear bolus block", "Reset RileyLink")
+            .containsExactly(
+                "Pair", "History", "Statistics", "Wake and tune", "Clear bolus block",
+                "Check connection", "Test mode", "Reset RileyLink"
+            )
     }
 
     @Test

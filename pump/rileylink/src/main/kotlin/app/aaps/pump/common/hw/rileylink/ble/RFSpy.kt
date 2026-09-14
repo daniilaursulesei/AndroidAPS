@@ -11,6 +11,7 @@ import app.aaps.core.utils.pump.ByteUtil.concat
 import app.aaps.core.utils.pump.ByteUtil.shortHexString
 import app.aaps.core.utils.pump.ThreadUtil.sig
 import app.aaps.pump.common.hw.rileylink.RileyLinkUtil
+import app.aaps.pump.common.hw.rileylink.ble.command.ResetRadio
 import app.aaps.pump.common.hw.rileylink.ble.command.RileyLinkCommand
 import app.aaps.pump.common.hw.rileylink.ble.command.SendAndListen
 import app.aaps.pump.common.hw.rileylink.ble.command.SetHardwareEncoding
@@ -27,6 +28,8 @@ import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkFirmwareVersion
 import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkFirmwareVersionBase
 import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkTargetFrequency
 import app.aaps.pump.common.hw.rileylink.ble.defs.usesV2Protocol
+import app.aaps.pump.common.hw.rileylink.diagnostics.FaultInjector
+import app.aaps.pump.common.hw.rileylink.diagnostics.InjectableFault
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
 import app.aaps.pump.common.hw.rileylink.diagnostics.SendAndListenDecoder
 import app.aaps.pump.common.hw.rileylink.diagnostics.VersionSource
@@ -57,7 +60,8 @@ class RFSpy(
     private val rileyLinkUtil: RileyLinkUtil,
     private val rfSpyResponseProvider: () -> RFSpyResponse,
     private val diag: RileyLinkDiag,
-    private val firmwareVersionStore: FirmwareVersionStore
+    private val firmwareVersionStore: FirmwareVersionStore,
+    private val faultInjector: FaultInjector
 ) {
 
     private val radioServiceUUID: UUID = UUID.fromString(GattAttributes.SERVICE_RADIO)
@@ -190,7 +194,13 @@ class RFSpy(
             // So that we can adjust other commands accordingly afterwords
 
             val getVersionRaw = getByteArray(RileyLinkCommandType.GetVersion.code)
-            val response = writeToDataRaw(getVersionRaw, 5000)
+            // Testing only, and only when a fault was armed by hand on the diagnostics screen.
+            // One shot: consume() clears it, so the retry below sees the real radio again.
+            val response = when {
+                faultInjector.consume(InjectableFault.VERSION_READ_FAILS)    -> null
+                faultInjector.consume(InjectableFault.VERSION_READ_BIT_SLIP) -> FaultInjector.BIT_SLIPPED_VERSION_REPLY
+                else                                                        -> writeToDataRaw(getVersionRaw, PROBE_TIMEOUT_MS)
+            }
 
             aapsLogger.debug(LTag.PUMPBTCOMM, String.format(Locale.ENGLISH, "Firmware Version. GetVersion [response=%s]", shortHexString(response)))
             diag.versionRead(response, response?.let { fromBytes(it) })
@@ -452,6 +462,28 @@ class RFSpy(
     }
 
     /**
+     * Asks the CC1110 what firmware it runs and returns the raw reply, for the self test.
+     *
+     * Deliberately raw and deliberately one attempt. The self test wants to report exactly what
+     * came back - nothing, a short reply, or bytes that are not a version string - and a helper
+     * that retried or tidied the answer would hide the very thing being looked for.
+     *
+     * @return the bytes the radio sent, or null if it did not answer in time.
+     */
+    fun probeRadio(): ByteArray? = writeToDataRaw(getByteArray(RileyLinkCommandType.GetVersion.code), PROBE_TIMEOUT_MS)
+
+    /**
+     * Tells the CC1110 to reboot.
+     *
+     * @return true if the radio acknowledged. A reboot often means no acknowledgement arrives at
+     *   all, which is not proof it failed - the caller should re-probe rather than trust this.
+     */
+    fun resetRadioChip(): Boolean {
+        val response = writeToData(ResetRadio(), EXPECTED_MAX_BLUETOOTH_LATENCY_MS)
+        return response?.isOK() == true
+    }
+
+    /**
      * Reset RileyLink Configuration (set all updateRegisters)
      */
     fun resetRileyLinkConfiguration() {
@@ -465,6 +497,7 @@ class RFSpy(
         private const val LOW_BATTERY_PERCENTAGE_THRESHOLD = 20
         private const val RILEYLINK_FREQ_XTAL: Long = 24000000
         private const val EXPECTED_MAX_BLUETOOTH_LATENCY_MS = 7500 // 1500
+        private const val PROBE_TIMEOUT_MS = 5000
         fun getFirmwareVersion(aapsLogger: AAPSLogger, bleVersion: String, cc1110Version: String?): RileyLinkFirmwareVersionBase {
             if (cc1110Version != null) {
                 val version = RileyLinkFirmwareVersion.getByVersionString(cc1110Version)

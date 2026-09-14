@@ -129,4 +129,27 @@
     <string name="rileylink_diag_copied">Diagnostics copied to clipboard</string>
     <string name="rileylink_diag_cached_firmware">Stored for this device</string>
 
+    <string name="rileylink_diag_run_check">Check connection</string>
+    <string name="rileylink_diag_test_mode">Test mode</string>
+    <string name="rileylink_diag_checking">Checking…</string>
+    <string name="rileylink_diag_result_title">RileyLink check</string>
+    <string name="rileylink_diag_repair_title">Suggested repairs</string>
+    <string name="rileylink_diag_repair_run">Try this</string>
+    <string name="rileylink_diag_repair_running">Working…</string>
+    <string name="rileylink_diag_recheck">Check again</string>
+    <string name="rileylink_diag_close">Close</string>
+    <string name="rileylink_diag_busy_bolus">A bolus is being delivered. The check would use the radio, so it is not run now. Try again when the bolus has finished.</string>
+    <string name="rileylink_diag_test_warning_title">Detach the pump first</string>
+    <string name="rileylink_diag_test_warning">Test mode makes the app fail on purpose, so it can be checked that it recovers.
+
+The pump must be detached from the body and must not be connected to an infusion set on a person. Insulin delivery must not depend on this pump while testing.
+
+Only continue if the pump is off the body.</string>
+    <string name="rileylink_diag_test_confirm">The pump is off the body</string>
+    <string name="rileylink_diag_test_cancel">Cancel</string>
+    <string name="rileylink_diag_test_pick">Choose what should go wrong. The fault fires once on the next matching operation, then clears itself. It also clears itself after two minutes if nothing uses it.</string>
+    <string name="rileylink_diag_test_armed" comment="%1$s=name of the armed fault. Example: TEST MODE ARMED — Version read returns nothing">TEST MODE ARMED — %1$s</string>
+    <string name="rileylink_diag_test_armed_hint">The next matching operation will fail on purpose. Clears itself after two minutes.</string>
+    <string name="rileylink_diag_test_disarm">Cancel test</string>
+
 </resources>
