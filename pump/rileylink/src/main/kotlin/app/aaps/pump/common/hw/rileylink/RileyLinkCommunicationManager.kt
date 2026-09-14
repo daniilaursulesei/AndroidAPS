@@ -11,6 +11,7 @@ import app.aaps.pump.common.hw.rileylink.ble.RFSpy
 import app.aaps.pump.common.hw.rileylink.ble.RileyLinkCommunicationException
 import app.aaps.pump.common.hw.rileylink.ble.data.FrequencyScanResults
 import app.aaps.pump.common.hw.rileylink.ble.data.FrequencyTrial
+import app.aaps.pump.common.hw.rileylink.ble.data.RFSpyResponse
 import app.aaps.pump.common.hw.rileylink.ble.data.RLMessage
 import app.aaps.pump.common.hw.rileylink.ble.data.RadioPacket
 import app.aaps.pump.common.hw.rileylink.ble.data.RadioResponse
@@ -59,6 +60,9 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
         }
 
     private var nextWakeUpRequired = 0L
+
+    /** Status, RSSI and packet counter. A reply no longer than this carries no pump packet. */
+    private val WAKE_UP_REPLY_HEADER_SIZE = 3
     private var timeoutCount = 0
 
     @Throws(RileyLinkCommunicationException::class)
@@ -129,11 +133,23 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
         return rfspy.notConnectedCount
     }
 
-    // FIXME change wakeup
-    // TODO we might need to fix this. Maybe make pump awake for shorter time (battery factor for pump) - Andy
+    /**
+     * Wake the pump, unless we have good reason to believe it is still awake.
+     *
+     * The pump only listens for a short window after it has been woken, so a command sent to a
+     * sleeping pump is simply lost. Waking it costs a 3 s burst of 200 repeats followed by a
+     * 25 s listen, so the result is remembered and the wake is skipped while the window lasts.
+     *
+     * The window is only remembered when the pump actually answered. Recording it after a
+     * failed wake is what used to happen, and it locks the driver out of talking to the pump:
+     * the wake fails, the driver notes the pump as awake anyway, and every command for the next
+     * [receiverDeviceAwakeForMinutes] goes out as a single packet that a sleeping pump can
+     * never hear. Nothing then retries the wake, so the failure holds until the window expires.
+     *
+     * Still open: [receiverDeviceAwakeForMinutes] is a fixed guess rather than anything the pump
+     * tells us, and a shorter window would cost the pump less battery.
+     */
     fun wakeUp(@Suppress("unused") durationMinutes: Int, force: Boolean) {
-        // If it has been longer than n minutes, do wakeup. Otherwise assume pump is still awake.
-        // **** FIXME: this wakeup doesn't seem to work well... must revisit
         // receiverDeviceAwakeForMinutes = duration_minutes;
 
         setPumpDeviceState(PumpDeviceState.WakingUp)
@@ -150,8 +166,14 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
             )
             aapsLogger.info(LTag.PUMPBTCOMM, "wakeup: raw response is " + shortHexString(resp?.raw))
 
-            // FIXME wakeUp successful !!!!!!!!!!!!!!!!!!
-            nextWakeUpRequired = System.currentTimeMillis() + (receiverDeviceAwakeForMinutes.toLong() * 60 * 1000)
+            if (wakeUpSucceeded(resp)) {
+                nextWakeUpRequired = System.currentTimeMillis() + (receiverDeviceAwakeForMinutes.toLong() * 60 * 1000)
+            } else {
+                // The pump is not awake. Say so, so the next command wakes it again instead of
+                // talking into a silence.
+                nextWakeUpRequired = 0L
+                aapsLogger.warn(LTag.PUMPBTCOMM, "Wake up failed, pump is not awake. Will wake again on the next command.")
+            }
         } else {
             aapsLogger.debug(LTag.PUMPBTCOMM, "Last pump communication was recent, not waking pump.")
         }
@@ -199,6 +221,31 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
      * @return
      */
     abstract fun tryToConnectToDevice(): Boolean
+
+    /**
+     * Did the pump answer the wake up?
+     *
+     * A timeout means it did not hear us, and an interrupted or empty reply means the RileyLink
+     * never got to listen. Beyond that the reply has to actually carry a pump packet, judged the
+     * same way [tryToConnectToDevice] judges one, because a reply can come back well formed and
+     * still contain nothing from the pump.
+     *
+     * `looksLikeRadioPacket` alone is not enough: it only asks for more than two bytes, and a
+     * radio that hears noise answers with status, RSSI and a counter and no payload at all. On
+     * the bench, a pump that had switched its radio off produced exactly `DD D8 0F` over and
+     * over, with the counter climbing as the receiver triggered on noise.
+     */
+    private fun wakeUpSucceeded(response: RFSpyResponse?): Boolean {
+        if (response == null) return false
+        if (response.wasTimeout() || response.wasInterrupted() || response.wasNoResponseFromRileyLink()) return false
+        // Status, RSSI and packet counter come first, so anything this short holds no pump packet.
+        if (response.raw.size <= WAKE_UP_REPLY_HEADER_SIZE) return false
+        return try {
+            response.getRadioResponse().isValid()
+        } catch (_: RileyLinkCommunicationException) {
+            false
+        }
+    }
 
     private fun scanForDevice(frequencies: DoubleArray): Double {
         aapsLogger.info(LTag.PUMPBTCOMM, String.format(Locale.ENGLISH, "Scanning for receiver (%s)", receiverDeviceID))
