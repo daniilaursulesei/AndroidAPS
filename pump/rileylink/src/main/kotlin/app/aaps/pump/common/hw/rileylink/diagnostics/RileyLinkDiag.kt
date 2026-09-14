@@ -294,6 +294,18 @@ class RileyLinkDiag(
         markWarn("LINK", "event" to "disconnected", "expected" to expected, "status" to status, "gattClosed" to gattClosed)
     }
 
+    /**
+     * A recovery probe: one cheap attempt to reach the pump while the driver is waiting for it
+     * to come back.
+     *
+     * @param found true when the pump answered, which ends the waiting
+     * @param attempt how many probes have been sent since the driver started waiting
+     * @param nextInMinutes how long until the next probe, 0 when there will not be another
+     */
+    fun probe(found: Boolean, attempt: Int, nextInMinutes: Int) {
+        mark("PROBE", "found" to found, "attempt" to attempt, "nextInMin" to nextInMinutes)
+    }
+
     /** A GATT operation was refused because the link is down, instead of waiting for a timeout. */
     @Synchronized
     fun writeRefusedLinkDown(operation: String) {

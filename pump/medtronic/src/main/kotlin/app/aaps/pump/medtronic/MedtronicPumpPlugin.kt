@@ -56,6 +56,7 @@ import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkTargetFrequency
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkPumpDevice
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkPumpInfo
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkServiceState
+import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
 import app.aaps.pump.common.hw.rileylink.keys.RileyLinkDoubleKey
 import app.aaps.pump.common.hw.rileylink.keys.RileyLinkLongKey
 import app.aaps.pump.common.hw.rileylink.keys.RileyLinkStringKey
@@ -94,6 +95,7 @@ import app.aaps.pump.medtronic.keys.MedtronicLongNonKey
 import app.aaps.pump.medtronic.keys.MedtronicStringPreferenceKey
 import app.aaps.pump.medtronic.service.RileyLinkMedtronicService
 import app.aaps.pump.medtronic.util.MedtronicUtil
+import app.aaps.pump.medtronic.util.ProbeSchedule
 import app.aaps.pump.medtronic.util.MedtronicUtil.Companion.isSame
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -138,6 +140,7 @@ class MedtronicPumpPlugin(
     private val medtronicPumpStatus: MedtronicPumpStatus,
     private val medtronicHistoryData: MedtronicHistoryData,
     private val rileyLinkServiceData: RileyLinkServiceData,
+    private val rileyLinkDiag: RileyLinkDiag,
     private val serviceTaskExecutor: ServiceTaskExecutor,
     private val uiInteraction: UiInteraction,
     private val notificationManager: NotificationManager,
@@ -371,6 +374,65 @@ class MedtronicPumpPlugin(
         firstRun = true
         isRefresh = true
     }//
+
+    // ---- recovery from a failed tune-up -------------------------------------------------
+    //
+    // A failed tune-up parks the service in PumpConnectorError. Nothing inside the driver
+    // leaves that state: the only code that restarts a tune-up sits on the timeout path of a
+    // radio command, and no radio command is sent while the state is PumpConnectorError. The
+    // queue then reports "connecting" for as long as it takes someone to walk out of
+    // Bluetooth range, because a fresh BLE connection is the one thing that re-initialises
+    // the service. A logged case ran for 7 hours 44 minutes.
+    //
+    // The way out is one cheap probe, spaced by a growing delay. A probe is a single wake
+    // with a short listen window, about 45 uAh, against roughly 338 uAh for a full tune-up.
+    // On a 250 mAh cell, probing for eight hours costs about a third of one percent.
+    //
+    // Deliberately no frequency scan: if the pump answers on no frequency at all then moving
+    // the frequency cannot help, and a pump with a flat battery goes silent for good while
+    // still running its stored basal rates, so scanning at it would drain the RileyLink for
+    // nothing. A scan is worth it only once the pump is audible again, and then the ordinary
+    // tune-up path handles it.
+
+    private val probeSchedule = ProbeSchedule()
+
+    /**
+     * Runs once a minute from the background thread in `PumpPluginAbstract`, which keeps
+     * ticking even when the command queue cannot connect - that is what makes it a usable
+     * place to recover from.
+     */
+    override fun doCustomScheduledActions() {
+        probeForPumpIfWaiting()
+    }
+
+    private fun probeForPumpIfWaiting() {
+        val now = System.currentTimeMillis()
+
+        if (rileyLinkServiceData.rileyLinkServiceState != RileyLinkServiceState.PumpConnectorError) {
+            probeSchedule.onHealthy(now)
+            return
+        }
+
+        val service = rileyLinkMedtronicService ?: return
+        // Do not step on a radio transaction that is already running.
+        if (service.rfSpy.radioBusy || isBusy()) return
+        if (!probeSchedule.shouldProbe(now)) return
+
+        if (service.medtronicCommunicationManager.probeForDevice()) {
+            probeSchedule.onProbeSucceeded(now)
+            aapsLogger.info(LTag.PUMP, "Pump answered a recovery probe after ${probeSchedule.attempt} attempt(s). Resuming.")
+            rileyLinkDiag.probe(found = true, attempt = probeSchedule.attempt, nextInMinutes = 0)
+            service.deviceCommunicationManager.clearNotConnectedCount()
+            rileyLinkServiceData.setServiceState(RileyLinkServiceState.PumpConnectorReady)
+        } else {
+            probeSchedule.onProbeFailed(now)
+            aapsLogger.debug(
+                LTag.PUMP,
+                "Pump did not answer recovery probe ${probeSchedule.attempt}, next in ${probeSchedule.intervalMinutes} min."
+            )
+            rileyLinkDiag.probe(found = false, attempt = probeSchedule.attempt, nextInMinutes = probeSchedule.intervalMinutes)
+        }
+    }
 
     private val isPumpNotReachable: Boolean
         get() {

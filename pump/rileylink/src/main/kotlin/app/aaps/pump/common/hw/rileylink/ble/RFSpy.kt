@@ -41,6 +41,7 @@ import org.apache.commons.lang3.ArrayUtils
 import java.util.Locale
 import java.util.Optional
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.SingleIn
@@ -71,7 +72,7 @@ class RFSpy(
     private val batteryLevelUUID: UUID = UUID.fromString(GattAttributes.CHARA_BATTERY_LEVEL)
     var notConnectedCount: Int = 0
 
-    private val transactionsInFlight = java.util.concurrent.atomic.AtomicInteger(0)
+    private val transactionsInFlight = AtomicInteger(0)
 
     /**
      * True while a command is on its way to the radio and its reply has not arrived.
