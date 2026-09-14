@@ -39,8 +39,39 @@ object VersionSlip {
      */
     private const val MARKER = "bg_rfspy"
 
-    /** Letters kept when building the readable form. */
+    /** Letters kept as themselves when building the readable form. */
     private fun Byte.isPrintableAscii(): Boolean = toInt() and 0xFF in 0x20..0x7E
+
+    /** Stands in for a byte the slip damaged, so the rest of the string still shows. */
+    private const val DAMAGED = '?'
+
+    /**
+     * Turns the decoded bytes into something a person can read.
+     *
+     * A slip usually damages a bit or two near the start as well as moving the frame, so the
+     * recovered text has isolated bad bytes in it. Those are replaced rather than treated as the
+     * end of the string: stopping at the first one threw away the whole version and reported a
+     * single letter, which said nothing about what had really arrived.
+     *
+     * Two bad bytes in a row does mean the end - by then we have left the string and are reading
+     * whatever followed it.
+     */
+    private fun readableFrom(decoded: ByteArray, start: Int): String {
+        val text = StringBuilder()
+        var consecutiveBad = 0
+        for (i in start until decoded.size) {
+            val b = decoded[i]
+            if (b.isPrintableAscii()) {
+                consecutiveBad = 0
+                text.append((b.toInt() and 0xFF).toChar())
+            } else {
+                consecutiveBad++
+                if (consecutiveBad >= 2) break
+                text.append(DAMAGED)
+            }
+        }
+        return text.toString().trimEnd(DAMAGED)
+    }
 
     /**
      * Searches [raw] for a version string hidden by a bit slip.
@@ -75,12 +106,7 @@ object VersionSlip {
             // The two letters before the marker are "su" in a healthy reply. Include them when they
             // are there, so the report shows how much of the string survived.
             val from = if (at >= 2) at - 2 else 0
-            val readable = decoded
-                .drop(from)
-                .takeWhile { it.isPrintableAscii() }
-                .map { (it.toInt() and 0xFF).toChar() }
-                .joinToString("")
-            return VersionSlipResult(shiftBits = shift, recovered = readable)
+            return VersionSlipResult(shiftBits = shift, recovered = readableFrom(decoded, from))
         }
         return null
     }

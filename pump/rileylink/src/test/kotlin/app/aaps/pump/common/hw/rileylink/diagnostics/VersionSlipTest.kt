@@ -25,6 +25,17 @@ class VersionSlipTest {
         assertTrue(result.recovered.endsWith("bg_rfspy 2.2.21"), "was: ${result.recovered}")
     }
 
+    /**
+     * The slip damaged one bit of the second letter as well as moving the frame. Reporting the
+     * whole string with that letter marked is what tells a reader the radio answered correctly and
+     * the link mangled it; stopping at the damaged byte reported a single letter and said nothing.
+     */
+    @Test fun `a damaged letter does not cut the string short`() {
+        val result = VersionSlip.detect(slippedReply)
+        requireNotNull(result)
+        assertEquals("s?bg_rfspy 2.2.21", result.recovered)
+    }
+
     @Test fun `a healthy reply is not reported as a slip`() {
         val healthy = byteArrayOf(0xDD.toByte()) + "subg_rfspy 2.2".toByteArray(Charsets.US_ASCII)
         assertNull(VersionSlip.detect(healthy))
