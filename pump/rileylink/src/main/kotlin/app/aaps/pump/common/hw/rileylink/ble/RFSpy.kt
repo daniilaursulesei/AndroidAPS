@@ -71,6 +71,18 @@ class RFSpy(
     private val batteryLevelUUID: UUID = UUID.fromString(GattAttributes.CHARA_BATTERY_LEVEL)
     var notConnectedCount: Int = 0
 
+    private val transactionsInFlight = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /**
+     * True while a command is on its way to the radio and its reply has not arrived.
+     *
+     * Only for reporting. The radio answers one command at a time, but nothing in this class
+     * enforces that, so a caller that starts a command while another is running gets 0xBB
+     * (interrupted) and the two can take each other's replies. The self test reads this so it can
+     * say its result is unreliable, rather than blaming the radio for its own interference.
+     */
+    val radioBusy: Boolean get() = transactionsInFlight.get() > 0
+
     private var reader: RFSpyReader = RFSpyReader(aapsLogger, rileyLinkBle)
     private var bleVersion: String? = null // We don't use it so no need of sophisticated logic
     private var currentFrequencyMHz: Double? = null
@@ -189,6 +201,12 @@ class RFSpy(
     private fun getCC1110Version(): String? {
         aapsLogger.debug(LTag.PUMPBTCOMM, "Firmware Version. Get Version - Start")
 
+        // Testing only. Taken once for the whole read, not once per attempt: the loop below tries
+        // five times, so a fault that failed a single attempt would always be recovered by the next
+        // one and could never reach the path it exists to test.
+        val injectFailure = faultInjector.consume(InjectableFault.VERSION_READ_FAILS)
+        val injectSlip = faultInjector.consume(InjectableFault.VERSION_READ_BIT_SLIP)
+
         (0..4).forEach { i ->
             // We have to call raw version of communication to get firmware version
             // So that we can adjust other commands accordingly afterwords
@@ -197,9 +215,9 @@ class RFSpy(
             // Testing only, and only when a fault was armed by hand on the diagnostics screen.
             // One shot: consume() clears it, so the retry below sees the real radio again.
             val response = when {
-                faultInjector.consume(InjectableFault.VERSION_READ_FAILS)    -> null
-                faultInjector.consume(InjectableFault.VERSION_READ_BIT_SLIP) -> FaultInjector.BIT_SLIPPED_VERSION_REPLY
-                else                                                        -> writeToDataRaw(getVersionRaw, PROBE_TIMEOUT_MS)
+                injectFailure -> null
+                injectSlip    -> FaultInjector.BIT_SLIPPED_VERSION_REPLY
+                else          -> writeToDataRaw(getVersionRaw, PROBE_TIMEOUT_MS)
             }
 
             aapsLogger.debug(LTag.PUMPBTCOMM, String.format(Locale.ENGLISH, "Firmware Version. GetVersion [response=%s]", shortHexString(response)))
@@ -222,6 +240,15 @@ class RFSpy(
     }
 
     private fun writeToDataRaw(bytes: ByteArray, responseTimeoutMs: Int): ByteArray? {
+        transactionsInFlight.incrementAndGet()
+        try {
+            return writeToDataRawInner(bytes, responseTimeoutMs)
+        } finally {
+            transactionsInFlight.decrementAndGet()
+        }
+    }
+
+    private fun writeToDataRawInner(bytes: ByteArray, responseTimeoutMs: Int): ByteArray? {
         SystemClock.sleep(1)
         // FIXME drain read queue?
         var junkInBuffer = reader.poll(0)

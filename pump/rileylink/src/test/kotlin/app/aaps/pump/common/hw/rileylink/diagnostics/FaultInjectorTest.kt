@@ -47,6 +47,20 @@ class FaultInjectorTest {
         assertTrue(injector.consume(InjectableFault.LINK_DROPS))
     }
 
+    /**
+     * The version read retries five times, so a fault taken once per attempt is always recovered by
+     * the next one. Test A showed exactly that: the fault fired, the retry succeeded, and the cache
+     * path it exists to reach was never entered. It has to be taken once for the whole read.
+     */
+    @Test fun `a fault is taken once, not once per retry`() {
+        injector.arm(InjectableFault.VERSION_READ_FAILS)
+        val takenByTheRead = injector.consume(InjectableFault.VERSION_READ_FAILS)
+        assertTrue(takenByTheRead)
+        repeat(4) {
+            assertFalse(injector.consume(InjectableFault.VERSION_READ_FAILS), "a retry took it again")
+        }
+    }
+
     @Test fun `disarming clears it`() {
         injector.arm(InjectableFault.LINK_DROPS)
         injector.disarm()

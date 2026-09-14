@@ -27,8 +27,13 @@ import dev.zacsweers.metro.SingleIn
  * BLE113 answered and the CC1110 did not, and that is what decides whether to reset the radio,
  * reconnect Bluetooth, or reach for the battery.
  *
- * Every method here blocks on Bluetooth, so call it off the main thread. It uses the same GATT
- * lock as ordinary pump traffic, so it will queue behind a command in progress rather than cut in.
+ * Every method here blocks on Bluetooth, so call it off the main thread.
+ *
+ * It does **not** get exclusive use of the radio. The GATT lock serialises single Bluetooth
+ * operations, not a whole radio command and its reply, so a probe sent while the app is talking to
+ * the pump interrupts that exchange and both sides can end up reading the other's answer. The radio
+ * says so itself, with 0xBB. So the radio check waits for the bus to go quiet, and if it will not,
+ * says its result cannot be trusted instead of blaming the radio for interference it caused.
  */
 @SingleIn(AppScope::class)
 @Inject
@@ -162,16 +167,33 @@ class RileyLinkSelfTest(
      */
     private fun checkRadio(ble113Ok: Boolean): DiagnosisCheck {
         if (!ble113Ok) return DiagnosisCheck(CHECK_RADIO, CheckOutcome.SKIPPED, "Not checked, the Bluetooth chip is not answering.")
+
+        // The radio answers one command at a time. Asking it something while the app is mid
+        // exchange with the pump interrupts that exchange, and the answer that comes back may
+        // belong to either of us.
+        val waitedForBus = waitForQuietRadio()
+        if (rfSpy.radioBusy) {
+            return DiagnosisCheck(
+                CHECK_RADIO, CheckOutcome.SKIPPED,
+                "Not checked, the app is talking to the pump right now.",
+                listOf(
+                    "Asking the radio anything now would interrupt that, and the answer could not be trusted.",
+                    "Wait until the pump has finished and check again."
+                )
+            )
+        }
+
         val raw = rfSpy.probeRadio()
         val text = raw?.let { String(it.map { b -> (b.toInt() and 0xFF).toChar() }.toCharArray()) } ?: ""
         return when {
             raw == null || raw.isEmpty()  -> DiagnosisCheck(
                 CHECK_RADIO, CheckOutcome.FAILED, "The radio chip did not answer.",
-                listOf(
-                    "The Bluetooth chip is fine, so this is the CC1110 itself.",
-                    "It is usually busy with a radio operation that has not finished.",
-                    "Restarting the radio chip is the next thing to try. If that does not help, remove power from the RileyLink for a few minutes."
-                )
+                buildList {
+                    add("The Bluetooth chip is fine, so this is the CC1110 itself.")
+                    add("It is usually busy with a radio operation that has not finished.")
+                    if (waitedForBus) add("The app had been talking to the pump just before this check, so try once more when everything is quiet.")
+                    add("Restarting the radio chip is the next thing to try. If that does not help, remove power from the RileyLink for a few minutes.")
+                }
             )
 
             text.contains(SUBG_RFSPY)     -> DiagnosisCheck(
@@ -252,6 +274,18 @@ class RileyLinkSelfTest(
     }
 
     /**
+     * Waits a short while for the radio to stop being used by something else.
+     *
+     * @return true if it had to wait at all, so the caller can say so in its report.
+     */
+    private fun waitForQuietRadio(): Boolean {
+        if (!rfSpy.radioBusy) return false
+        val until = System.currentTimeMillis() + BUS_WAIT_MS
+        while (rfSpy.radioBusy && System.currentTimeMillis() < until) Thread.sleep(BUS_POLL_MS)
+        return true
+    }
+
+    /**
      * One sentence naming the first thing that is broken.
      *
      * Ordered by the signal path, because a fault upstream makes everything downstream unreadable -
@@ -292,12 +326,14 @@ class RileyLinkSelfTest(
             }
 
             RepairAction.RESET_RADIO_CONFIG -> {
+                waitForQuietRadio()
                 rfSpy.resetRileyLinkConfiguration()
                 val answering = rfSpy.probeRadio()?.isNotEmpty() == true
                 RepairResult(action, answering, if (answering) "Radio settings reloaded and the radio is answering." else "Radio settings reloaded, but the radio still does not answer.")
             }
 
             RepairAction.RESET_CC1110       -> {
+                waitForQuietRadio()
                 rfSpy.resetRadioChip()
                 // A rebooting chip usually never acknowledges, so its answer proves nothing. Give it
                 // time to come back and ask it directly instead.
@@ -327,6 +363,8 @@ class RileyLinkSelfTest(
 
         private const val SUBG_RFSPY = "subg_rfspy"
         private const val RESET_SETTLE_MS = 3000L
+        private const val BUS_WAIT_MS = 8000L
+        private const val BUS_POLL_MS = 200L
         private const val RECONNECT_SETTLE_MS = 1000L
 
         private const val CHECK_ADAPTER = "Phone Bluetooth"
