@@ -73,7 +73,23 @@ class RileyLinkSelfTest(
             suggestedRepairs = repairs.distinct(),
             headline = headlineFor(checks, adapterOk, linkOk, ble113Ok, radioCheck)
         )
-        aapsLogger.warn(LTag.RLDIAG, "RLDIAG|SELFTEST|event=done|worst=${report.worst}|repairs=${report.suggestedRepairs.size}")
+        // Write the whole report, not just the verdict. The detail is the reason this feature is
+        // worth more than a warning light, and a report that lives only on screen cannot be read
+        // afterwards by anyone the user sends the log to.
+        report.checks.forEach { check ->
+            aapsLogger.warn(
+                LTag.RLDIAG,
+                "RLDIAG|SELFTEST_CHECK|name=${check.title}|outcome=${check.outcome}|summary=${check.summary}" +
+                    check.detail.joinToString("") { "|detail=$it" }
+            )
+        }
+        report.suggestedRepairs.forEach {
+            aapsLogger.warn(LTag.RLDIAG, "RLDIAG|SELFTEST_REPAIR_OFFERED|action=${it.name}")
+        }
+        aapsLogger.warn(
+            LTag.RLDIAG,
+            "RLDIAG|SELFTEST|event=done|worst=${report.worst}|repairs=${report.suggestedRepairs.size}|headline=${report.headline}"
+        )
         return report
     }
 

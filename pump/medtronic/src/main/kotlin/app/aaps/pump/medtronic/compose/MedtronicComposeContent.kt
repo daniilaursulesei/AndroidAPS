@@ -154,6 +154,7 @@ class MedtronicComposeContent(
                 state = diagnosisState,
                 onRepair = overviewViewModel::runRepair,
                 onRecheck = overviewViewModel::runDiagnosis,
+                onShowMessage = { message -> scope.launch { snackbarHostState.showSnackbar(message) } },
                 onDismiss = overviewViewModel::dismissDiagnosis
             )
         }
