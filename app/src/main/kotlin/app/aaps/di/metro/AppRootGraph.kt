@@ -120,6 +120,7 @@ import app.aaps.core.objects.wizard.BolusWizard
 import app.aaps.core.objects.wizard.QuickWizard
 import app.aaps.core.utils.receivers.DataInbox
 import app.aaps.database.AppRepository
+import app.aaps.implementation.maintenance.ErrorLogReporter
 import app.aaps.implementation.maintenance.cloud.CloudStorageManager
 import app.aaps.implementation.lifecycle.ProcessLifecycleListener
 import app.aaps.implementation.resources.ResourceHelperImpl
@@ -463,6 +464,9 @@ interface AppRootGraph : MetroViewModelMultibindings, PumpAccessors {
 
     /** Autotune, for the automation actions. */
     val autotune: Autotune
+
+    /** Watches the log for pump link faults and uploads the surrounding log. `MainApp` starts it. */
+    val errorLogReporter: ErrorLogReporter
 
     /** Running-mode helpers, from commonMain. `MainApp` reads the reconciler. */
     val runningModeReconciler: RunningModeReconciler

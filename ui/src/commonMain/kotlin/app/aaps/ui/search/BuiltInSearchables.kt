@@ -150,7 +150,8 @@ class BuiltInSearchables(
     )
 
     /**
-     * Maintenance preferences (email recipient, logs amount, data choices, unattended export)
+     * Maintenance preferences (email recipient, logs amount, data choices, unattended export,
+     * automatic error reports)
      */
     val maintenance = PreferenceSubScreenDef(
         key = "maintenance_settings",
@@ -171,6 +172,14 @@ class BuiltInSearchables(
                 title = CoreUiStrings.unattended_settings_export,
                 items = listOf(
                     BooleanKey.MaintenanceEnableExportSettingsAutomation
+                )
+            ),
+            PreferenceSubScreenDef(
+                key = "error_report_setting",
+                title = CoreUiStrings.automatic_error_reports,
+                items = listOf(
+                    BooleanKey.MaintenanceUploadLogsOnError,
+                    BooleanKey.MaintenanceUploadAllErrors
                 )
             )
         ),

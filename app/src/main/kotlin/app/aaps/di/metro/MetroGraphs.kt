@@ -55,6 +55,7 @@ import app.aaps.di.mergePlugins
 import app.aaps.core.objects.di.CoreObjectsGraph
 import app.aaps.core.objects.workflow.MetroWorkerCreator
 import app.aaps.database.AppRepository
+import app.aaps.implementation.maintenance.ErrorLogReporter
 import app.aaps.implementation.lifecycle.ProcessLifecycleListener
 import app.aaps.implementation.resources.ResourceHelperImpl
 import app.aaps.implementation.utils.fabric.FabricPrivacyImpl
@@ -241,6 +242,7 @@ class MetroGraphs(
     val nsIncomingDataProcessor: NsIncomingDataProcessor get() = root.nsIncomingDataProcessor
     val automation: Automation get() = root.automation
     val automationRuntime: AutomationRuntime get() = root.automationRuntime
+    val errorLogReporter: ErrorLogReporter get() = root.errorLogReporter
 
     /** Same plugin as [objectives], by class. The instrumented tests ask for the concrete type. */
     val objectivesPlugin: ObjectivesPlugin get() = root.objectivesPlugin

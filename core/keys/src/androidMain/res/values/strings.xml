@@ -82,6 +82,10 @@
     <!-- Maintenance preferences -->
     <string name="pref_title_maintenance_enable_fabric">Enable Fabric crash reporting</string>
     <string name="pref_title_maintenance_enable_export_automation">Enable automated settings export</string>
+    <string name="pref_title_maintenance_upload_logs_on_error">Upload logs when an error happens</string>
+    <string name="pref_summary_maintenance_upload_logs_on_error">When the pump link fails, put the recent log in your cloud storage and show a notification. Needs cloud storage to be set up.</string>
+    <string name="pref_title_maintenance_upload_all_errors">Include all application errors</string>
+    <string name="pref_summary_maintenance_upload_all_errors">Also upload a log for any other error, not only pump link problems. This creates many more reports.</string>
 
     <!-- Autotune preferences -->
     <string name="pref_title_autotune_auto_switch_profile">Auto switch profile</string>

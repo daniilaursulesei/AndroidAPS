@@ -206,6 +206,22 @@ enum class BooleanKey(
     // hideParentScreenIfHidden collapses the now-empty "Unattended Settings Export" subscreen on a client.
     MaintenanceEnableExportSettingsAutomation("enable_unattended_export", false, KeysStrings.pref_title_maintenance_enable_export_automation, defaultedBySM = false, showInNsClientMode = false, hideParentScreenIfHidden = true),
 
+    // Automatic error reports. Off by default: it uploads to the user's own cloud storage, so it
+    // must be an explicit choice, and it does nothing at all until a cloud provider is signed in.
+    MaintenanceUploadLogsOnError(
+        key = "upload_logs_on_error", defaultValue = false, title = KeysStrings.pref_title_maintenance_upload_logs_on_error,
+        summary = KeysStrings.pref_summary_maintenance_upload_logs_on_error, defaultedBySM = false, hideParentScreenIfHidden = true
+    ),
+
+    // Widens the rule from pump link faults to every line logged at error level. AndroidAPS logs
+    // errors that are not faults - a Nightscout upload that failed once, for example - so this is
+    // for chasing a specific problem, not for leaving on.
+    MaintenanceUploadAllErrors(
+        key = "upload_logs_all_errors", defaultValue = false, title = KeysStrings.pref_title_maintenance_upload_all_errors,
+        summary = KeysStrings.pref_summary_maintenance_upload_all_errors, defaultedBySM = false,
+        dependency = MaintenanceUploadLogsOnError
+    ),
+
     AutotuneAutoSwitchProfile("autotune_auto", false, KeysStrings.pref_title_autotune_auto_switch_profile, KeysStrings.pref_summary_autotune_auto_switch_profile),
     AutotuneCategorizeUamAsBasal("categorize_uam_as_basal", false, KeysStrings.pref_title_autotune_categorize_uam_as_basal, KeysStrings.pref_summary_autotune_categorize_uam_as_basal),
     AutotuneTuneInsulinCurve("autotune_tune_insulin_curve", false, KeysStrings.pref_title_autotune_tune_insulin_curve),

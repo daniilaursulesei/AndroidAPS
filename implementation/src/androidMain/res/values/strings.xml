@@ -95,4 +95,15 @@
     <string name="google_drive_download_error">Error downloading file: %1$s</string>
     <string name="google_drive_authorized">Google Drive Authorized</string>
     <string name="google_drive_reauth_required">Please clear settings and re-authorize Google Drive</string>
+
+    <!--    Automatic error reports (ErrorLogReporter) -->
+    <string name="error_kind_bit_slip">Radio data damaged</string>
+    <string name="error_kind_radio_silent">Radio not answering</string>
+    <string name="error_kind_link_timeout">Bluetooth timeout</string>
+    <string name="error_kind_pump_unreachable">Pump unreachable</string>
+    <string name="error_kind_app_error">Application error</string>
+    <string name="error_log_uploaded" comment="%1$s=name of the problem, for example &quot;Pump unreachable&quot;. %2$s=name of the uploaded file, for example AndroidAPS_ERROR_bit-slip_1757808000000.zip">%1$s. The log was uploaded to your cloud storage as %2$s.</string>
+    <string name="error_log_upload_failed" comment="%1$s=name of the problem, for example &quot;Pump unreachable&quot;">%1$s. The log could not be uploaded. It is still on the phone.</string>
+    <string name="error_log_tags_off" comment="%1$s=list of log tag names, for example &quot;RLDIAG, PUMP&quot;">Automatic error reports cannot see anything. Turn these logs back on in the Maintenance menu, under Log settings: %1$s.</string>
+    <string name="error_log_no_cloud" comment="%1$s=name of the problem, for example &quot;Pump unreachable&quot;">%1$s. Set up cloud storage to upload logs automatically.</string>
 </resources>

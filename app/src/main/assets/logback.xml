@@ -30,9 +30,15 @@
         </encoder>
     </appender>
 
+    <!-- Watches every line for a pump link fault. When one appears the reporter zips the recent
+         log and uploads it, so the whole chain leading to the fault is kept. Detection only:
+         this appender writes nothing and does no I/O. -->
+    <appender name="errors" class="app.aaps.implementation.logging.ErrorLogAppender" />
+
     <!-- Write INFO (and higher-level) messages to the log file -->
     <root level="DEBUG">
         <appender-ref ref="file" />
         <appender-ref ref="logcat" />
+        <appender-ref ref="errors" />
     </root>
 </configuration>

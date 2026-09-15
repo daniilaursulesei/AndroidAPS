@@ -172,6 +172,11 @@ enum class NotificationId(
     AAPS_DIR_NOT_SELECTED(NORMAL, SYSTEM),
     GOOGLE_DRIVE_ERROR(IMPORTANT, SYSTEM),
     SETTINGS_EXPORT_RESULT(INFO, SYSTEM),
+
+    // An automatic error report was captured (see ErrorLogReporter). Deliberately not
+    // allowMultiple: a broken radio link produces several faults and the latest should replace
+    // the previous card, not add to a stack of them.
+    ERROR_LOG_UPLOADED(NORMAL, SYSTEM),
     SNACKBAR_FALLBACK(NORMAL, SYSTEM, allowMultiple = true),
 
     // Automation — general notification action (NOT the "Alarm" action, which uses the system

@@ -161,6 +161,7 @@ class MainApp : Application(), MetroMemberInjector, MetroViewModelFactoryOwner, 
     private val runningModeExpiryScheduler get() = metroGraphs.runningModeExpiryScheduler
     private val profileSwitchExpiryScheduler get() = metroGraphs.profileSwitchExpiryScheduler
     private val automationRuntime get() = metroGraphs.automationRuntime
+    private val errorLogReporter get() = metroGraphs.errorLogReporter
     private val appScope get() = metroGraphs.applicationScope
 
     private lateinit var insulinLabel: String
@@ -182,6 +183,12 @@ class MainApp : Application(), MetroMemberInjector, MetroViewModelFactoryOwner, 
 
         // Here should be everything injected
         aapsLogger.debug("onCreate")
+
+        // Watch the log for pump link faults. Started before the plugins load on purpose: a radio
+        // that is already broken fails during initialization, and that is exactly the part of the
+        // log worth having. Does nothing until the user switches it on in Maintenance settings.
+        errorLogReporter.start()
+
         ProcessLifecycleOwner.get().lifecycle.addObserver(processLifecycleListener)
 
         // Background fallback for EventShowSnackbar: when no activity is STARTED
