@@ -364,15 +364,24 @@ abstract class PumpPluginAbstract protected constructor(
         Thread {
             do {
                 SystemClock.sleep(60000)
-                if (this.isDriverInitialized && !isInPreventConnectMode()) {
-                    val statusRefresh = workWithStatusRefresh(
-                        PumpDataRefreshAction.GetData, null, null
-                    )
-                    if (doWeHaveAnyStatusNeededRefereshing(statusRefresh)) {
-                        if (!commandQueue.statusInQueue()) {
-                            runBlocking { commandQueue.readStatus("Scheduled Status Refresh") }
+                if (!isInPreventConnectMode()) {
+                    if (this.isDriverInitialized) {
+                        val statusRefresh = workWithStatusRefresh(
+                            PumpDataRefreshAction.GetData, null, null
+                        )
+                        if (doWeHaveAnyStatusNeededRefereshing(statusRefresh)) {
+                            if (!commandQueue.statusInQueue()) {
+                                runBlocking { commandQueue.readStatus("Scheduled Status Refresh") }
+                            }
                         }
                     }
+                    // Outside the isDriverInitialized check on purpose. That flag is set only at
+                    // the END of a successful initializePump(), so a driver that has never once
+                    // reached the pump has it false - and that is exactly when a driver needs to
+                    // try again. Leaving the hook inside the check meant the recovery probe could
+                    // only run after the pump had already been reached, so an app restarted while
+                    // the pump was out of range sat idle for hours instead of retrying.
+                    // The default implementation is empty, so nothing changes for other pumps.
                     doCustomScheduledActions()
                 }
             } while (serviceRunning)
