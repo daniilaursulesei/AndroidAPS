@@ -293,6 +293,20 @@ class MedtronicOverviewViewModel(
         val rlLevel = if (rlState.isError() || rlError != null) StatusLevel.CRITICAL else StatusLevel.NORMAL
         add(PumpInfoRow(label = rh.gs(RileyLinkR.string.rileylink_status), value = rlStatusText, level = rlLevel))
 
+        // A blocked RileyLink, one row each. Shown at the top and marked critical on purpose: while
+        // this is here nothing is managing the pump, and a block that is quietly forgotten is the
+        // worst outcome this feature has. Reading it from the stored list rather than from a field
+        // means the row is right even straight after a restart.
+        blockableDevices().filter { it.isBlocked }.forEach { device ->
+            add(
+                PumpInfoRow(
+                    label = rh.gs(RileyLinkR.string.rileylink_block_status),
+                    value = rh.gs(RileyLinkR.string.rileylink_block_status_value, device.name, device.address),
+                    level = StatusLevel.CRITICAL
+                )
+            )
+        }
+
         // RileyLink battery (conditional)
         if (rileyLinkServiceData.showBatteryLevel) {
             val batteryText = rileyLinkServiceData.batteryLevel?.let { "$it%" } ?: "?"
