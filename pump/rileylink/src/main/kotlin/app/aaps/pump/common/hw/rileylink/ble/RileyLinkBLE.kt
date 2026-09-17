@@ -152,8 +152,8 @@ class RileyLinkBLE(
      */
     private fun refuseWhileReleased(what: String): Boolean {
         if (!rileyLinkServiceData.isReleased) return false
-        val left = rileyLinkServiceData.release.minutesLeft(System.currentTimeMillis())
-        aapsLogger.info(LTag.PUMPBTCOMM, "$what refused: the RileyLink is released for $left more minute(s)")
+        val held = rileyLinkServiceData.release.minutesHeld(System.currentTimeMillis())
+        aapsLogger.info(LTag.PUMPBTCOMM, "$what refused: the RileyLink has been released for $held minute(s)")
         return true
     }
 

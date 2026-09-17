@@ -28,15 +28,15 @@ class RileyLinkServiceData(
 ) {
 
     /**
-     * A timed hold that keeps the app off the RileyLink so something else can use it.
+     * A hold that keeps the app off the RileyLink so something else can use it.
      *
      * Lives here because both the Bluetooth layer, which must refuse to connect, and the pump
-     * driver, which must stop asking, need to see the same window.
+     * driver, which must stop asking, need to see the same hold.
      */
     val release = RileyLinkRelease()
 
     /** True while the app should not touch the RileyLink. */
-    val isReleased: Boolean get() = release.isHeld(System.currentTimeMillis())
+    val isReleased: Boolean get() = release.isHeld
 
     var tuneUpDone = false
     var rileyLinkError: RileyLinkError? = null

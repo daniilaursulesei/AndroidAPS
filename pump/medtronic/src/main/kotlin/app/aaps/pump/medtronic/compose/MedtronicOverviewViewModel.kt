@@ -535,17 +535,17 @@ class MedtronicOverviewViewModel(
 
     /** The button says what it will do next: hand the RileyLink over, or take it back. */
     private fun releaseLabel(): String {
-        val left = rileyLinkServiceData.release.minutesLeft(System.currentTimeMillis())
-        return if (left > 0) rh.gs(RileyLinkR.string.rileylink_release_resume, left)
+        val release = rileyLinkServiceData.release
+        return if (release.isHeld) rh.gs(RileyLinkR.string.rileylink_release_resume, release.minutesHeld(System.currentTimeMillis()))
         else rh.gs(RileyLinkR.string.rileylink_release)
     }
 
     /**
-     * Hands the RileyLink to something else for a few minutes, or takes it back.
+     * Hands the RileyLink to something else, or takes it back.
      *
      * A RileyLink takes one Bluetooth connection at a time, so while this app holds it nothing
-     * else can reach it. The pump is not managed during the hold, which is why the hold is short
-     * and ends on its own.
+     * else can reach it. The hold lasts until this button is pressed again. Nothing manages the
+     * pump while it is held, which is why the button says so and keeps counting the minutes.
      */
     private fun onReleaseClicked() {
         val service = medtronicPumpPlugin.rileyLinkService
@@ -555,12 +555,12 @@ class MedtronicOverviewViewModel(
         }
         // releaseRileyLink and resumeRileyLink both change the service state, which is already
         // one of the things uiState is built from, so the label updates without asking.
-        if (rileyLinkServiceData.release.minutesLeft(System.currentTimeMillis()) > 0) {
+        if (rileyLinkServiceData.release.isHeld) {
             service.resumeRileyLink()
             _events.tryEmit(MedtronicOverviewEvent.ShowSnackbar(rh.gs(RileyLinkR.string.rileylink_release_resumed)))
         } else {
-            val held = service.releaseRileyLink()
-            _events.tryEmit(MedtronicOverviewEvent.ShowSnackbar(rh.gs(RileyLinkR.string.rileylink_released, held)))
+            service.releaseRileyLink()
+            _events.tryEmit(MedtronicOverviewEvent.ShowSnackbar(rh.gs(RileyLinkR.string.rileylink_released)))
         }
     }
 

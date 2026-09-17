@@ -153,7 +153,7 @@ Only continue if the pump is off the body.</string>
     <string name="rileylink_diag_test_disarm">Cancel test</string>
 
     <string name="rileylink_release">Release RileyLink</string>
-    <string name="rileylink_release_resume" comment="%1$d = whole minutes left of the release. Example: Take RileyLink back (8 min)">Take RileyLink back (%1$d min)</string>
-    <string name="rileylink_released" comment="%1$d = whole minutes the release will last. Example: RileyLink released for 10 minutes.">RileyLink released for %1$d minutes. The pump is not managed until then.</string>
+    <string name="rileylink_release_resume" comment="%1$d = whole minutes the RileyLink has been released so far. Example: Take RileyLink back (held 8 min)">Take RileyLink back (held %1$d min)</string>
+    <string name="rileylink_released">RileyLink released. It stays released until you take it back, and the pump is not managed until then.</string>
     <string name="rileylink_release_resumed">RileyLink taken back. The app will connect to it again.</string>
 </resources>

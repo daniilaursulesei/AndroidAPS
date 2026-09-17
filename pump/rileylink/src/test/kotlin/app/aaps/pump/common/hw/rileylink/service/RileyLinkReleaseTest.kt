@@ -13,130 +13,109 @@ class RileyLinkReleaseTest {
     @Test
     fun `nothing is held to begin with`() {
         val release = RileyLinkRelease()
-        assertFalse(release.isHeld(t0))
-        assertEquals(0, release.minutesLeft(t0))
-        assertEquals(0L, release.untilMillis)
+        assertFalse(release.isHeld)
+        assertEquals(0, release.minutesHeld(t0))
+        assertEquals(0L, release.heldSince)
     }
 
     @Test
-    fun `a hold lasts the number of minutes asked for`() {
+    fun `a hold does not end by itself, however long it lasts`() {
         val release = RileyLinkRelease()
-        release.hold(t0, 10)
-        assertTrue(release.isHeld(t0))
-        assertTrue(release.isHeld(t0 + 9 * minute))
-        assertFalse(release.isHeld(t0 + 10 * minute))
+        release.hold(t0)
+        assertTrue(release.isHeld)
+        assertTrue(release.isHeld)
+        assertEquals(0, release.minutesHeld(t0))
+        assertEquals(59, release.minutesHeld(t0 + 59 * minute))
+        // A whole day later it is still held. This is the point of the change.
+        assertTrue(release.isHeld)
+        assertEquals(24 * 60, release.minutesHeld(t0 + 24 * 60 * minute))
     }
 
     @Test
-    fun `the hold ends by itself`() {
+    fun `minutes held counts whole minutes since the hold started`() {
         val release = RileyLinkRelease()
-        release.hold(t0, 1)
-        assertFalse(release.isHeld(t0 + minute + 1))
-        assertEquals(0, release.minutesLeft(t0 + minute + 1))
+        release.hold(t0)
+        assertEquals(0, release.minutesHeld(t0 + minute - 1))
+        assertEquals(1, release.minutesHeld(t0 + minute))
+        assertEquals(8, release.minutesHeld(t0 + 8 * minute + 30_000))
     }
 
     @Test
-    fun `minutes left rounds up so a part minute still reads as one`() {
+    fun `pressing release again does not restart the count`() {
         val release = RileyLinkRelease()
-        release.hold(t0, 10)
-        assertEquals(10, release.minutesLeft(t0))
-        assertEquals(1, release.minutesLeft(t0 + 9 * minute))
-        assertEquals(1, release.minutesLeft(t0 + 10 * minute - 1))
-        assertEquals(0, release.minutesLeft(t0 + 10 * minute))
+        release.hold(t0)
+        release.hold(t0 + 5 * minute)
+        assertEquals(t0, release.heldSince)
+        assertEquals(5, release.minutesHeld(t0 + 5 * minute))
     }
 
     @Test
-    fun `asking again replaces the hold instead of adding to it`() {
+    fun `taking it back ends the hold`() {
         val release = RileyLinkRelease()
-        release.hold(t0, 10)
-        val second = release.hold(t0 + minute, 10)
-        assertEquals(t0 + 11 * minute, second)
-        assertEquals(10, release.minutesLeft(t0 + minute))
-    }
-
-    @Test
-    fun `a hold cannot be longer than the cap`() {
-        val release = RileyLinkRelease()
-        release.hold(t0, 60 * 24)
-        assertEquals(RileyLinkRelease.MAX_MINUTES, release.minutesLeft(t0))
-    }
-
-    @Test
-    fun `a hold is always at least one minute`() {
-        val release = RileyLinkRelease()
-        release.hold(t0, 0)
-        assertTrue(release.isHeld(t0))
-        assertEquals(1, release.minutesLeft(t0))
-        release.hold(t0, -5)
-        assertEquals(1, release.minutesLeft(t0))
+        release.hold(t0)
+        release.release()
+        assertFalse(release.isHeld)
+        assertEquals(0, release.minutesHeld(t0))
     }
 
     // The Bluetooth client is created with autoConnect, so Android re-opens the link on its own.
     // Closing the client is the only way to stop that, and then nothing re-opens it either, so the
-    // window has to remember that a reconnect is owed.
+    // hold has to remember that a reconnect is owed.
 
     @Test
     fun `nothing is owed before anything was released`() {
-        assertFalse(RileyLinkRelease().shouldReconnect(t0))
+        assertFalse(RileyLinkRelease().shouldReconnect())
     }
 
     @Test
     fun `no reconnect while the hold is running`() {
         val release = RileyLinkRelease()
-        release.hold(t0, 10)
+        release.hold(t0)
         assertTrue(release.needsReconnect)
-        assertFalse(release.shouldReconnect(t0 + 5 * minute))
+        assertFalse(release.shouldReconnect())
     }
 
     @Test
-    fun `a reconnect is owed once the hold ends`() {
+    fun `a reconnect is owed as soon as it is taken back`() {
         val release = RileyLinkRelease()
-        release.hold(t0, 10)
-        assertTrue(release.shouldReconnect(t0 + 10 * minute))
-    }
-
-    @Test
-    fun `a phone that slept past the end still reconnects on its next tick`() {
-        val release = RileyLinkRelease()
-        release.hold(t0, 10)
-        assertTrue(release.shouldReconnect(t0 + 3 * 60 * minute))
+        release.hold(t0)
+        release.release()
+        assertTrue(release.shouldReconnect())
     }
 
     @Test
     fun `the reconnect is owed once, not on every tick`() {
         val release = RileyLinkRelease()
-        release.hold(t0, 10)
-        assertTrue(release.shouldReconnect(t0 + 10 * minute))
-        release.reconnected()
-        assertFalse(release.shouldReconnect(t0 + 11 * minute))
-        assertFalse(release.shouldReconnect(t0 + 60 * minute))
-    }
-
-    @Test
-    fun `taking it back by hand owes the reconnect straight away`() {
-        val release = RileyLinkRelease()
-        release.hold(t0, 10)
+        release.hold(t0)
         release.release()
-        assertTrue(release.shouldReconnect(t0))
-    }
-
-    @Test
-    fun `releasing twice still owes exactly one reconnect, after the second window`() {
-        val release = RileyLinkRelease()
-        release.hold(t0, 10)
-        release.hold(t0 + minute, 10)
-        assertFalse(release.shouldReconnect(t0 + 5 * minute))
-        assertTrue(release.shouldReconnect(t0 + 11 * minute))
+        assertTrue(release.shouldReconnect())
         release.reconnected()
-        assertFalse(release.shouldReconnect(t0 + 12 * minute))
+        assertFalse(release.shouldReconnect())
+        assertFalse(release.shouldReconnect())
     }
 
     @Test
-    fun `it can be ended early`() {
+    fun `releasing twice still owes exactly one reconnect`() {
         val release = RileyLinkRelease()
-        release.hold(t0, 10)
+        release.hold(t0)
+        release.hold(t0 + minute)
         release.release()
-        assertFalse(release.isHeld(t0))
-        assertEquals(0, release.minutesLeft(t0))
+        assertTrue(release.shouldReconnect())
+        release.reconnected()
+        assertFalse(release.shouldReconnect())
+    }
+
+    @Test
+    fun `a second release after taking it back owes another reconnect`() {
+        val release = RileyLinkRelease()
+        release.hold(t0)
+        release.release()
+        release.reconnected()
+        assertFalse(release.shouldReconnect())
+
+        release.hold(t0 + 10 * minute)
+        assertEquals(t0 + 10 * minute, release.heldSince)
+        release.release()
+        assertTrue(release.shouldReconnect())
     }
 }

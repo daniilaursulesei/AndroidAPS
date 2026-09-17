@@ -1,21 +1,21 @@
 package app.aaps.pump.common.hw.rileylink.service
 
 /**
- * A timed hold on the Bluetooth link to the RileyLink.
+ * A hold on the Bluetooth link to the RileyLink, for as long as it takes.
  *
- * A RileyLink takes one Bluetooth connection at a time. While the phone holds it, nothing else
- * can reach it - not a laptop running a test, not a second phone. Releasing it needs more than a
- * disconnect, because the driver reconnects within seconds; it needs a window during which the
- * app does not try.
+ * A RileyLink accepts one Bluetooth connection at a time. While the phone holds it, nothing else
+ * can reach it - not a laptop running a bench test, not a second phone. Letting go needs more
+ * than a disconnect, because the Android stack reconnects on its own, so this records that the
+ * app is to stay away until it is told otherwise.
  *
- * The window always ends by itself. A release that lasted until someone remembered to undo it
- * would be a pump left unmanaged for as long as that took, so the only question this asks is
- * "for how long", never "until further notice".
+ * The hold does not end by itself. That is deliberate and it is the whole point: a bench session
+ * takes as long as it takes, and a window that expired in the middle of one would take the
+ * RileyLink back while it was being used. Nothing is managing the pump while this is held.
  */
 class RileyLinkRelease {
 
-    /** When the hold ends, as epoch milliseconds. Zero when there is no hold. */
-    var untilMillis: Long = 0
+    /** When the hold started, as epoch milliseconds. Zero when there is no hold. */
+    var heldSince: Long = 0
         private set
 
     /**
@@ -23,38 +23,35 @@ class RileyLinkRelease {
      *
      * Releasing closes the Bluetooth client, which is the only way to cancel the automatic
      * reconnect Android performs on its own. Nothing re-opens it by itself, so without this the
-     * hold would end and the pump would stay unreachable until someone noticed.
+     * hold would be lifted and the pump would stay unreachable until someone noticed.
      */
     var needsReconnect: Boolean = false
         private set
 
     /** True while the app should leave the RileyLink alone. */
-    fun isHeld(now: Long): Boolean = now < untilMillis
+    val isHeld: Boolean get() = heldSince != 0L
 
-    /** Whole minutes left, rounded up, so a part minute still reads as one. Zero when free. */
-    fun minutesLeft(now: Long): Int {
-        val left = untilMillis - now
-        return if (left <= 0) 0 else ((left + MINUTE_MS - 1) / MINUTE_MS).toInt()
+    /** Whole minutes the hold has lasted so far, for the button to show. Zero when free. */
+    fun minutesHeld(now: Long): Int {
+        if (!isHeld) return 0
+        val elapsed = now - heldSince
+        return if (elapsed <= 0) 0 else (elapsed / MINUTE_MS).toInt()
     }
 
     /**
-     * Holds the link for [minutes] from [now].
+     * Starts the hold, or leaves an existing one alone.
      *
-     * Asking again while a hold is running replaces it rather than adding to it, so pressing the
-     * button twice cannot quietly stretch the window to twice its length.
-     *
-     * @return the moment the hold will end.
+     * Asking again while a hold is running keeps the original start time, so the button does not
+     * reset the elapsed count each time it is pressed.
      */
-    fun hold(now: Long, minutes: Int): Long {
-        val capped = minutes.coerceIn(1, MAX_MINUTES)
-        untilMillis = now + capped * MINUTE_MS
+    fun hold(now: Long) {
+        if (!isHeld) heldSince = now
         needsReconnect = true
-        return untilMillis
     }
 
-    /** Ends the hold now. The link still has to be re-opened; [reconnected] says when it was. */
+    /** Ends the hold. The link still has to be opened again; [reconnected] says when it was. */
     fun release() {
-        untilMillis = 0
+        heldSince = 0
     }
 
     /** Call after the link has been opened again. */
@@ -65,24 +62,13 @@ class RileyLinkRelease {
     /**
      * True when the hold is over but the link has not been brought back yet.
      *
-     * This is the moment to re-open it, and it is asked on a timer rather than scheduled, so a
-     * phone that slept through the end of the window still recovers on its next tick.
+     * Asked on a timer rather than scheduled, so the link comes back on the next tick after the
+     * hold is lifted however the app happened to be sleeping at the time.
      */
-    fun shouldReconnect(now: Long): Boolean = needsReconnect && !isHeld(now)
+    fun shouldReconnect(): Boolean = needsReconnect && !isHeld
 
     companion object {
 
         private const val MINUTE_MS = 60_000L
-
-        /**
-         * The longest hold that can be asked for.
-         *
-         * Long enough to run a bench test, short enough that forgetting about it is not the same
-         * as switching the pump off for the afternoon.
-         */
-        const val MAX_MINUTES = 30
-
-        /** What the button asks for when it is pressed. */
-        const val DEFAULT_MINUTES = 10
     }
 }
