@@ -43,6 +43,9 @@
     <string name="medtronic_bolus_delay_15s">15 s</string>
 
     <!-- MDT Fragment -->
+    <string name="medtronic_battery_percent" comment="%1$d=percent left. Example: 42%">%1$d%%</string>
+    <string name="medtronic_battery_percent_volts" comment="%1$d=percent left, %2$.2f=cell voltage. Example: 42%  (1.31 V)">%1$d%%  (%2$.2f V)</string>
+    <string name="medtronic_battery_volts" comment="%1$.2f=cell voltage. Example: 1.31 V">%1$.2f V</string>
     <string name="rl_battery_label">RileyLink Battery</string>
 
     <!-- MDT Errors -->

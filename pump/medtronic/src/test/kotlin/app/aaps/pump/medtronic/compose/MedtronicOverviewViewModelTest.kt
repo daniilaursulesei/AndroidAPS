@@ -20,7 +20,10 @@ import app.aaps.pump.common.hw.rileylink.ble.RileyLinkBLE
 import app.aaps.pump.common.hw.rileylink.diagnostics.FaultInjector
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkSelfTest
+import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.pump.common.hw.rileylink.keys.RileyLinkStringKey
 import app.aaps.pump.common.hw.rileylink.service.FirmwareVersionStore
+import app.aaps.pump.common.hw.rileylink.service.RileyLinkBlockList
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
 import app.aaps.pump.common.hw.rileylink.service.tasks.ResetRileyLinkConfigurationTask
 import app.aaps.pump.common.hw.rileylink.service.tasks.ServiceTaskExecutor
@@ -72,6 +75,13 @@ internal class MedtronicOverviewViewModelTest {
     private val medtronicPumpStatus: MedtronicPumpStatus = mock()
     private val medtronicUtil: MedtronicUtil = mock()
     private val rileyLinkServiceData: RileyLinkServiceData = mock()
+
+    /**
+     * The block list is read while the overview is built, both for the button label and for the
+     * blocked RileyLink row, so it has to be a real object rather than a null from the mock.
+     * A stubbed [Preferences] with nothing blocked is the ordinary case.
+     */
+    private val preferences: Preferences = mock()
     private val serviceTaskExecutor: ServiceTaskExecutor = mock()
     private val resetTaskProvider: () -> ResetRileyLinkConfigurationTask = mock()
     private val wakeTaskProvider: () -> WakeAndTuneTask = mock()
@@ -99,6 +109,10 @@ internal class MedtronicOverviewViewModelTest {
 
         // Pump state read by buildUiState() -> buildInfoRows() (kept minimal to skip optional branches).
         whenever(rileyLinkServiceData.rileyLinkServiceState).thenReturn(RileyLinkServiceState.NotStarted)
+        whenever(preferences.get(RileyLinkStringKey.BlockedDevices)).thenReturn("")
+        whenever(preferences.get(RileyLinkStringKey.MacAddress)).thenReturn("")
+        whenever(preferences.get(RileyLinkStringKey.Name)).thenReturn("")
+        whenever(rileyLinkServiceData.blockList).thenReturn(RileyLinkBlockList(preferences))
         whenever(medtronicPumpStatus.pumpDeviceState).thenReturn(PumpDeviceState.NeverContacted)
         whenever(medtronicPumpStatus.activeProfileName).thenReturn("STD")
         whenever(medtronicPumpStatus.lastConnection).thenReturn(0L)      // -> "-" (skips ago formatting)
@@ -115,6 +129,7 @@ internal class MedtronicOverviewViewModelTest {
 
         // labels asserted on
         whenever(rh.gs(CoreUiR.string.refresh)).thenReturn("Refresh")
+        whenever(rh.gs(RileyLinkR.string.rileylink_block_button)).thenReturn("Block a RileyLink")
         whenever(rh.gs(RileyLinkR.string.rileylink_pair)).thenReturn("Pair")
         whenever(rh.gs(CoreUiR.string.pump_history)).thenReturn("History")
         whenever(rh.gs(R.string.riley_statistics)).thenReturn("Statistics")
@@ -149,8 +164,48 @@ internal class MedtronicOverviewViewModelTest {
         assertThat(state.managementActions.map { it.label })
             .containsExactly(
                 "Pair", "History", "Statistics", "Wake and tune", "Clear bolus block",
-                "Check connection", "Test mode", "Reset RileyLink"
+                "Check connection", "Test mode", "Block a RileyLink", "Reset RileyLink"
             )
+    }
+
+    @Test
+    fun batteryRow_warnsOnVoltageWhenNoBatteryTypeIsSet() {
+        // The fault this change is about. With no battery type, getCalculatedPercent() discards
+        // the voltage and returns a flat 70, so the row used to read a confident "70%" on a cell
+        // that was nearly flat. 1.25 V is 18 % of the alkaline range, which is a warning.
+        whenever(medtronicPumpStatus.batteryType).thenReturn(BatteryType.None)
+        whenever(medtronicPumpStatus.batteryVoltage).thenReturn(1.25)
+        whenever(medtronicPumpStatus.batteryRemaining).thenReturn(70)
+
+        val row = createViewModel().uiState.value.infoRows
+            .filterIsInstance<PumpInfoRow>().first { it.label == "Battery" }
+
+        assertThat(row.level).isEqualTo(StatusLevel.WARNING)
+    }
+
+    @Test
+    fun batteryRow_staysNormalOnAFreshCellWithNoBatteryType() {
+        whenever(medtronicPumpStatus.batteryType).thenReturn(BatteryType.None)
+        whenever(medtronicPumpStatus.batteryVoltage).thenReturn(1.46)
+        whenever(medtronicPumpStatus.batteryRemaining).thenReturn(70)
+
+        val row = createViewModel().uiState.value.infoRows
+            .filterIsInstance<PumpInfoRow>().first { it.label == "Battery" }
+
+        assertThat(row.level).isEqualTo(StatusLevel.NORMAL)
+    }
+
+    @Test
+    fun batteryRow_takesTheWorseOfPercentAndVoltage() {
+        // A healthy looking percentage must not hide a flat cell.
+        whenever(medtronicPumpStatus.batteryType).thenReturn(BatteryType.Alkaline)
+        whenever(medtronicPumpStatus.batteryVoltage).thenReturn(1.21)
+        whenever(medtronicPumpStatus.batteryRemaining).thenReturn(90)
+
+        val row = createViewModel().uiState.value.infoRows
+            .filterIsInstance<PumpInfoRow>().first { it.label == "Battery" }
+
+        assertThat(row.level).isEqualTo(StatusLevel.CRITICAL)
     }
 
     @Test
