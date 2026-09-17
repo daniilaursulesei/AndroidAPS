@@ -157,8 +157,10 @@ class RileyLinkBLE(
      */
     private fun refuseBlocked(what: String, address: String? = null): Boolean {
         val blockList = rileyLinkServiceData.blockList
+        if (address == null) {
+            if (!rileyLinkServiceData.isCurrentDeviceBlocked) return false
+        } else if (!blockList.isBlocked(address)) return false
         val mac = address ?: rileyLinkServiceData.rileyLinkAddress ?: blockList.configuredAddress()
-        if (!blockList.isBlocked(mac)) return false
         aapsLogger.info(LTag.PUMPBTCOMM, "$what refused: $mac is blocked. Unblock it on the Medtronic screen to use it again.")
         return true
     }

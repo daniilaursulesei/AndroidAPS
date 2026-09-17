@@ -441,7 +441,7 @@ class MedtronicPumpPlugin(
      * failures, and so nothing queues a tune up over it.
      */
     override fun isInPreventConnectMode(): Boolean {
-        val blocked = rileyLinkServiceData.isConfiguredBlocked
+        val blocked = rileyLinkServiceData.isCurrentDeviceBlocked
         // This runs on the driver's own minute tick, which is the only regular beat available.
         // Closing the Bluetooth client is what stops Android reconnecting on its own, so once the
         // block is gone something has to open the link again, and this is it.
@@ -456,7 +456,7 @@ class MedtronicPumpPlugin(
      * it cannot be forgotten. Repeating it as an urgent alarm every half hour would only train the
      * user to ignore that alarm.
      */
-    override fun isConnectionBlockedOnPurpose(): Boolean = rileyLinkServiceData.isConfiguredBlocked
+    override fun isConnectionBlockedOnPurpose(): Boolean = rileyLinkServiceData.isCurrentDeviceBlocked
 
     private val isPumpNotReachable: Boolean
         get() {

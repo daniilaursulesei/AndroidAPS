@@ -275,6 +275,19 @@ class RFSpy(
      * @return the reply, or null when the radio did not answer or never became free.
      */
     private fun writeToDataRaw(bytes: ByteArray, responseTimeoutMs: Int, opName: String): ByteArray? {
+        // The last gate, and the only one that cannot be walked around. Refusing to OPEN a link
+        // covers the paths that open one, and nothing else: a link that is already up, or that the
+        // Android stack brought back by itself, still carries commands, and a service task that
+        // only calls discoverServices() never touches a connect path at all. Every radio command
+        // in the driver comes through this function, so a block checked here holds no matter how
+        // the link came to exist.
+        //
+        // Null is what a caller already gets when the radio is busy, so nothing new has to be
+        // handled upstream.
+        if (rileyLinkServiceData.isCurrentDeviceBlocked) {
+            aapsLogger.info(LTag.PUMPBTCOMM, "$opName refused: the RileyLink is blocked")
+            return null
+        }
         val askedAt = System.currentTimeMillis()
         val behind = radioHolder
         val behindOp = radioHolderOp

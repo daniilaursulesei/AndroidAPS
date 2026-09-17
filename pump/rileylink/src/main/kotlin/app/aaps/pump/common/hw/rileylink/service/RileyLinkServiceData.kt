@@ -43,8 +43,15 @@ class RileyLinkServiceData(
      */
     var needsReopen: Boolean = false
 
-    /** True when the RileyLink this app is set up to use is blocked. */
-    val isConfiguredBlocked: Boolean get() = blockList.isConfiguredBlocked()
+    /**
+     * True when the RileyLink this app would use right now is blocked.
+     *
+     * The live address when there is one, and the configured address otherwise: a deliberate
+     * disconnect clears the live one, and "not connected right now" must never read as
+     * "not blocked".
+     */
+    val isCurrentDeviceBlocked: Boolean
+        get() = rileyLinkAddress?.let { blockList.isBlocked(it) } ?: blockList.isConfiguredBlocked()
 
     var tuneUpDone = false
     var rileyLinkError: RileyLinkError? = null

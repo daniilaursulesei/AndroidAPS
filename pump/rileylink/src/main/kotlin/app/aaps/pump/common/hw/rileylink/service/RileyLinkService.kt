@@ -204,7 +204,7 @@ abstract class RileyLinkService : Service() {
         // block that outlived a restart left it false, and without this the link would never come
         // back. Only when there is no link: opening one on top of a live one would leave a second
         // Bluetooth client behind.
-        if (!blockList.isConfiguredBlocked() && !rileyLinkBLE.isConnected) rileyLinkServiceData.needsReopen = true
+        if (!rileyLinkServiceData.isCurrentDeviceBlocked && !rileyLinkBLE.isConnected) rileyLinkServiceData.needsReopen = true
         reopenAfterUnblock()
     }
 
@@ -218,7 +218,7 @@ abstract class RileyLinkService : Service() {
     fun reopenAfterUnblock() {
         if (!rileyLinkServiceData.needsReopen) return
         val blockList = rileyLinkServiceData.blockList
-        if (blockList.isConfiguredBlocked()) return
+        if (rileyLinkServiceData.isCurrentDeviceBlocked) return
         rileyLinkServiceData.needsReopen = false
         val address = rileyLinkServiceData.rileyLinkAddress ?: blockList.configuredAddress()
         if (address == null) {
