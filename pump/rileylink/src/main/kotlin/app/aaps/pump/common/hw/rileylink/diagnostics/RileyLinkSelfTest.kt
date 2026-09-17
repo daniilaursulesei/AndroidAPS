@@ -262,9 +262,13 @@ class RileyLinkSelfTest(
             "Operations refused because the link was down: ${s.writesWhileLinkDown}",
             "Bluetooth operations that timed out: ${s.gattWriteTimeouts}",
             "Version replies damaged by the chip to chip link: ${s.versionSlipsSeen}",
-            "Most start-ups running at once: ${s.concurrentInitPeak}"
+            "Most start-ups running at once: ${s.concurrentInitPeak}",
+            "Commands that waited for the radio: ${s.radioTurnsWaited} (longest ${s.radioLongestWaitMs} ms)",
+            "Commands dropped because the radio stayed busy: ${s.radioTurnsMissed}",
+            "Replies found in the queue with no command waiting: ${s.radioJunkDrained}"
         )
-        val bad = s.versionSlipsSeen > 0 || s.concurrentInitPeak > 1 || s.gattWriteTimeouts > 0
+        val bad = s.versionSlipsSeen > 0 || s.concurrentInitPeak > 1 || s.gattWriteTimeouts > 0 ||
+            s.radioTurnsMissed > 0
         return DiagnosisCheck(
             CHECK_HISTORY,
             if (bad) CheckOutcome.WARNING else CheckOutcome.OK,

@@ -41,7 +41,9 @@ import org.apache.commons.lang3.ArrayUtils
 import java.util.Locale
 import java.util.Optional
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.locks.ReentrantLock
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.SingleIn
@@ -75,12 +77,32 @@ class RFSpy(
     private val transactionsInFlight = AtomicInteger(0)
 
     /**
+     * Held for a whole command and its reply, so only one command is on the radio at a time.
+     *
+     * The radio answers one command at a time. Two callers share this class - the service task
+     * executor runs the tune up, and the command queue runs the status reads - and until this
+     * lock existed both could write to the radio at once. The second command then got `0xBB`
+     * (interrupted) or `0x22` (unknown command, because the chip read a length byte out of the
+     * middle of the other command), and the two threads could take each other's replies. A single
+     * Bluetooth operation was already guarded, but a whole round trip was not, which is where the
+     * two interleaved.
+     *
+     * Fair, so a thread that has been waiting cannot be passed over again and again by a caller
+     * that sends in a tight loop.
+     */
+    private val radioLock = ReentrantLock(true)
+
+    /** The thread currently holding [radioLock], for the markers. Reporting only. */
+    @Volatile private var radioHolder: String? = null
+
+    /** The command currently holding [radioLock], for the markers. Reporting only. */
+    @Volatile private var radioHolderOp: String? = null
+
+    /**
      * True while a command is on its way to the radio and its reply has not arrived.
      *
-     * Only for reporting. The radio answers one command at a time, but nothing in this class
-     * enforces that, so a caller that starts a command while another is running gets 0xBB
-     * (interrupted) and the two can take each other's replies. The self test reads this so it can
-     * say its result is unreliable, rather than blaming the radio for its own interference.
+     * Only for reporting. [radioLock] is what keeps it to one at a time; the self test reads this
+     * to wait for the radio to go quiet before it runs its own checks.
      */
     val radioBusy: Boolean get() = transactionsInFlight.get() > 0
 
@@ -218,7 +240,7 @@ class RFSpy(
             val response = when {
                 injectFailure -> null
                 injectSlip    -> FaultInjector.BIT_SLIPPED_VERSION_REPLY
-                else          -> writeToDataRaw(getVersionRaw, PROBE_TIMEOUT_MS)
+                else          -> writeToDataRaw(getVersionRaw, PROBE_TIMEOUT_MS, "GetVersion")
             }
 
             aapsLogger.debug(LTag.PUMPBTCOMM, String.format(Locale.ENGLISH, "Firmware Version. GetVersion [response=%s]", shortHexString(response)))
@@ -240,18 +262,52 @@ class RFSpy(
         return null
     }
 
-    private fun writeToDataRaw(bytes: ByteArray, responseTimeoutMs: Int): ByteArray? {
+    /**
+     * Sends one command and waits for its reply, with the radio to itself.
+     *
+     * @param opName the command name, for the markers only.
+     * @return the reply, or null when the radio did not answer or never became free.
+     */
+    private fun writeToDataRaw(bytes: ByteArray, responseTimeoutMs: Int, opName: String): ByteArray? {
+        val askedAt = System.currentTimeMillis()
+        val behind = radioHolder
+        val behindOp = radioHolderOp
+        // Waiting can be interrupted. This function could never throw before, and a new exception
+        // type escaping into the command queue would be a worse fault than the one being fixed, so
+        // an interrupt is reported as a missed turn and the flag is put back for whoever set it.
+        val gotRadio = try {
+            radioLock.tryLock(RADIO_LOCK_WAIT_MS, TimeUnit.MILLISECONDS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+        if (!gotRadio) {
+            diag.radioTurnMissed(opName, System.currentTimeMillis() - askedAt, behind, behindOp)
+            aapsLogger.error(LTag.PUMPBTCOMM, "writeToData: the radio was still busy with $behindOp, dropping $opName")
+            return null
+        }
+        val waitedMs = System.currentTimeMillis() - askedAt
+        // Only worth a marker when there really was a queue. Every one of these lines is a
+        // collision that used to happen instead.
+        if (waitedMs >= RADIO_TURN_REPORT_MS) diag.radioTurnTaken(opName, waitedMs, behind, behindOp)
+        radioHolder = Thread.currentThread().name
+        radioHolderOp = opName
         transactionsInFlight.incrementAndGet()
         try {
-            return writeToDataRawInner(bytes, responseTimeoutMs)
+            return writeToDataRawInner(bytes, responseTimeoutMs, opName)
         } finally {
             transactionsInFlight.decrementAndGet()
+            radioHolder = null
+            radioHolderOp = null
+            radioLock.unlock()
         }
     }
 
-    private fun writeToDataRawInner(bytes: ByteArray, responseTimeoutMs: Int): ByteArray? {
+    private fun writeToDataRawInner(bytes: ByteArray, responseTimeoutMs: Int, opName: String): ByteArray? {
         SystemClock.sleep(1)
-        // FIXME drain read queue?
+        // Anything already in the queue belongs to no one. With one command at a time this can
+        // only be a reply the radio sent after its caller had given up, so it is worth counting
+        // rather than dropping quietly.
         var junkInBuffer = reader.poll(0)
 
         while (junkInBuffer != null) {
@@ -259,6 +315,7 @@ class RFSpy(
                 LTag.PUMPBTCOMM, (sig() + "writeToData: draining read queue, found this: "
                     + shortHexString(junkInBuffer))
             )
+            diag.radioJunkDrained(opName, junkInBuffer)
             junkInBuffer = reader.poll(0)
         }
 
@@ -286,7 +343,7 @@ class RFSpy(
         diag.tx(commandName, bytes, rileyLinkServiceData.firmwareVersion.usesV2Protocol(), describeForRadio(bytes))
 
         val startedAt = System.currentTimeMillis()
-        val rawResponse = writeToDataRaw(bytes, responseTimeoutMs)
+        val rawResponse = writeToDataRaw(bytes, responseTimeoutMs, commandName)
         diag.rx(commandName, rawResponse, System.currentTimeMillis() - startedAt)
 
         if (rawResponse == null) {
@@ -498,7 +555,7 @@ class RFSpy(
      *
      * @return the bytes the radio sent, or null if it did not answer in time.
      */
-    fun probeRadio(): ByteArray? = writeToDataRaw(getByteArray(RileyLinkCommandType.GetVersion.code), PROBE_TIMEOUT_MS)
+    fun probeRadio(): ByteArray? = writeToDataRaw(getByteArray(RileyLinkCommandType.GetVersion.code), PROBE_TIMEOUT_MS, "GetVersion(probe)")
 
     /**
      * Tells the CC1110 to reboot.
@@ -526,6 +583,25 @@ class RFSpy(
         private const val RILEYLINK_FREQ_XTAL: Long = 24000000
         private const val EXPECTED_MAX_BLUETOOTH_LATENCY_MS = 7500 // 1500
         private const val PROBE_TIMEOUT_MS = 5000
+
+        /**
+         * How long a command waits for its turn on the radio before it gives up.
+         *
+         * The longest single command is a wake up: 25 s of listening plus the Bluetooth latency
+         * allowance, so about 33 s. Two of those queued is the worst honest case. Ninety seconds
+         * leaves room for that and still frees the app if a command ever gets stuck holding the
+         * radio.
+         */
+        private const val RADIO_LOCK_WAIT_MS = 90_000L
+
+        /**
+         * Waits shorter than this are not reported.
+         *
+         * A few milliseconds is ordinary hand off between threads. Anything longer means one
+         * command really did sit behind another, which is what the marker is for.
+         */
+        private const val RADIO_TURN_REPORT_MS = 5L
+
         fun getFirmwareVersion(aapsLogger: AAPSLogger, bleVersion: String, cc1110Version: String?): RileyLinkFirmwareVersionBase {
             if (cc1110Version != null) {
                 val version = RileyLinkFirmwareVersion.getByVersionString(cc1110Version)

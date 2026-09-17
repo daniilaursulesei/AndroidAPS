@@ -87,6 +87,14 @@ data class RileyLinkDiagSnapshot(
     val writesWhileLinkDown: Int = 0,
     val versionSlipsSeen: Int = 0,
     val concurrentInitPeak: Int = 0,
+    /** Commands that had to wait for another command to release the radio. */
+    val radioTurnsWaited: Int = 0,
+    /** The longest any command waited for its turn on the radio. */
+    val radioLongestWaitMs: Long = 0,
+    /** Commands dropped because the radio never became free in time. Must stay at zero. */
+    val radioTurnsMissed: Int = 0,
+    /** Replies found in the queue before a command was sent, so they belong to nothing. */
+    val radioJunkDrained: Int = 0,
     /** Most recent markers, newest first. Capped at [RileyLinkDiag.EVENT_HISTORY]. */
     val events: List<RileyLinkDiagEvent> = emptyList()
 )
@@ -226,6 +234,7 @@ class RileyLinkDiag(
         }
         mark(
             "TX", "op" to name, "fmt" to if (v2) "v2" else "v1", "len" to payload.size,
+            "thread" to Thread.currentThread().name,
             "detail" to (detail ?: "-"), "hex" to ByteUtil.shortHexString(payload)
         )
     }
@@ -250,7 +259,7 @@ class RileyLinkDiag(
                     silentSinceMillis = it.silentSinceMillis ?: now
                 )
             }
-            markWarn("RX", "op" to name, "result" to "NONE", "waited" to waitedMs, "silentStreak" to streak)
+            markWarn("RX", "op" to name, "result" to "NONE", "waited" to waitedMs, "thread" to Thread.currentThread().name, "silentStreak" to streak)
         } else {
             _snapshot.update {
                 it.copy(
@@ -262,8 +271,75 @@ class RileyLinkDiag(
                     silentSinceMillis = null
                 )
             }
-            mark("RX", "op" to name, "result" to "OK", "len" to raw.size, "waited" to waitedMs, "hex" to ByteUtil.shortHexString(raw))
+            mark("RX", "op" to name, "result" to "OK", "len" to raw.size, "waited" to waitedMs, "thread" to Thread.currentThread().name, "hex" to ByteUtil.shortHexString(raw))
         }
+    }
+
+    // endregion
+
+    // region radio turns
+
+    /**
+     * A command had to wait before it could use the radio.
+     *
+     * The radio answers one command at a time. When two threads send at once the second one gets
+     * `0xBB` (interrupted) or `0x22` (unknown command), and the two can take each other's
+     * replies. Waiting for a turn is the cure, and this marker is the proof it happened: every
+     * line here is one collision that did not occur.
+     *
+     * @param op the command that waited
+     * @param waitedMs how long it waited
+     * @param behind the thread that was holding the radio
+     * @param behindOp the command that thread was running
+     */
+    @Synchronized
+    fun radioTurnTaken(op: String, waitedMs: Long, behind: String?, behindOp: String?) {
+        _snapshot.update {
+            it.copy(
+                radioTurnsWaited = it.radioTurnsWaited + 1,
+                radioLongestWaitMs = maxOf(it.radioLongestWaitMs, waitedMs)
+            )
+        }
+        mark(
+            "RADIO_TURN", "op" to op, "waitedMs" to waitedMs,
+            "thread" to Thread.currentThread().name,
+            "behind" to (behind ?: "-"), "behindOp" to (behindOp ?: "-")
+        )
+    }
+
+    /**
+     * A command was dropped because the radio never became free.
+     *
+     * This should never happen. If it does, a command is stuck holding the radio, and the wait
+     * cap is the only thing keeping the rest of the app moving.
+     */
+    @Synchronized
+    fun radioTurnMissed(op: String, waitedMs: Long, behind: String?, behindOp: String?) {
+        _snapshot.update { it.copy(radioTurnsMissed = it.radioTurnsMissed + 1) }
+        markWarn(
+            "RADIO_TURN_MISSED", "op" to op, "waitedMs" to waitedMs,
+            "thread" to Thread.currentThread().name,
+            "behind" to (behind ?: "-"), "behindOp" to (behindOp ?: "-"),
+            "count" to _snapshot.value.radioTurnsMissed
+        )
+    }
+
+    /**
+     * A reply was sitting in the queue before a command was even sent, so it belongs to nothing.
+     *
+     * While two threads shared the radio this was usually the other thread's reply. With one
+     * command at a time it can only be a late answer from the radio itself, which makes it a
+     * useful measurement rather than noise.
+     */
+    @Synchronized
+    fun radioJunkDrained(op: String, junk: ByteArray) {
+        _snapshot.update { it.copy(radioJunkDrained = it.radioJunkDrained + 1) }
+        markWarn(
+            "RADIO_JUNK", "op" to op, "len" to junk.size,
+            "thread" to Thread.currentThread().name,
+            "hex" to ByteUtil.shortHexString(junk),
+            "count" to _snapshot.value.radioJunkDrained
+        )
     }
 
     // endregion
