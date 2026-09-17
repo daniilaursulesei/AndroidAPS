@@ -1,0 +1,64 @@
+package app.aaps.pump.common.hw.rileylink.service
+
+/**
+ * A timed hold on the Bluetooth link to the RileyLink.
+ *
+ * A RileyLink takes one Bluetooth connection at a time. While the phone holds it, nothing else
+ * can reach it - not a laptop running a test, not a second phone. Releasing it needs more than a
+ * disconnect, because the driver reconnects within seconds; it needs a window during which the
+ * app does not try.
+ *
+ * The window always ends by itself. A release that lasted until someone remembered to undo it
+ * would be a pump left unmanaged for as long as that took, so the only question this asks is
+ * "for how long", never "until further notice".
+ */
+class RileyLinkRelease {
+
+    /** When the hold ends, as epoch milliseconds. Zero when there is no hold. */
+    var untilMillis: Long = 0
+        private set
+
+    /** True while the app should leave the RileyLink alone. */
+    fun isHeld(now: Long): Boolean = now < untilMillis
+
+    /** Whole minutes left, rounded up, so a part minute still reads as one. Zero when free. */
+    fun minutesLeft(now: Long): Int {
+        val left = untilMillis - now
+        return if (left <= 0) 0 else ((left + MINUTE_MS - 1) / MINUTE_MS).toInt()
+    }
+
+    /**
+     * Holds the link for [minutes] from [now].
+     *
+     * Asking again while a hold is running replaces it rather than adding to it, so pressing the
+     * button twice cannot quietly stretch the window to twice its length.
+     *
+     * @return the moment the hold will end.
+     */
+    fun hold(now: Long, minutes: Int): Long {
+        val capped = minutes.coerceIn(1, MAX_MINUTES)
+        untilMillis = now + capped * MINUTE_MS
+        return untilMillis
+    }
+
+    /** Ends the hold now. */
+    fun release() {
+        untilMillis = 0
+    }
+
+    companion object {
+
+        private const val MINUTE_MS = 60_000L
+
+        /**
+         * The longest hold that can be asked for.
+         *
+         * Long enough to run a bench test, short enough that forgetting about it is not the same
+         * as switching the pump off for the afternoon.
+         */
+        const val MAX_MINUTES = 30
+
+        /** What the button asks for when it is pressed. */
+        const val DEFAULT_MINUTES = 10
+    }
+}

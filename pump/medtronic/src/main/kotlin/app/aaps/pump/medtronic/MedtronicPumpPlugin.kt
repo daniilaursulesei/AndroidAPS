@@ -434,6 +434,14 @@ class MedtronicPumpPlugin(
         }
     }
 
+    /**
+     * True while the RileyLink has been handed to something else for a few minutes.
+     *
+     * Stops the refresh loop from trying, so the release is quiet in the log instead of a run
+     * of failures, and so nothing queues a tune up over it.
+     */
+    override fun isInPreventConnectMode(): Boolean = rileyLinkServiceData.isReleased
+
     private val isPumpNotReachable: Boolean
         get() {
             val rileyLinkServiceState = rileyLinkServiceData.rileyLinkServiceState

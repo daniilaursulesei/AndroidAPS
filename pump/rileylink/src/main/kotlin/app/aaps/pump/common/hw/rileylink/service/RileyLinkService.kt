@@ -150,6 +150,38 @@ abstract class RileyLinkService : Service() {
     }
 
     abstract fun setPumpDeviceState(pumpDeviceState: PumpDeviceState)
+
+    /**
+     * Drops the Bluetooth link and keeps the app off the RileyLink for a while.
+     *
+     * For handing the RileyLink to something else - a laptop running a bench test, a second
+     * phone. It takes one connection at a time, so nothing else can reach it until this app
+     * lets go, and a plain disconnect is undone by the next reconnect a few seconds later.
+     *
+     * The stored address is kept, so this is not an unpair. The hold ends by itself, because a
+     * release that waited for someone to remember it would be a pump left unmanaged until then.
+     *
+     * @param minutes how long to stay off, capped by RileyLinkRelease.MAX_MINUTES.
+     * @return the number of minutes the hold will actually last.
+     */
+    fun releaseRileyLink(minutes: Int = RileyLinkRelease.DEFAULT_MINUTES): Int {
+        val now = System.currentTimeMillis()
+        rileyLinkServiceData.release.hold(now, minutes)
+        val held = rileyLinkServiceData.release.minutesLeft(now)
+        aapsLogger.info(LTag.PUMPBTCOMM, "RileyLink released for $held minute(s). The app will not connect to it until then.")
+        if (rileyLinkBLE.isConnected) rileyLinkBLE.disconnect()
+        rileyLinkServiceData.setServiceState(RileyLinkServiceState.BluetoothReady)
+        return held
+    }
+
+    /** Ends a release early and lets the driver connect again. */
+    fun resumeRileyLink() {
+        rileyLinkServiceData.release.release()
+        aapsLogger.info(LTag.PUMPBTCOMM, "RileyLink release ended. The app may connect again.")
+        // Re-announce the state so the screen redraws now rather than on its next tick.
+        rileyLinkServiceData.setServiceState(RileyLinkServiceState.BluetoothReady)
+    }
+
     fun disconnectRileyLink() {
         if (rileyLinkBLE.isConnected) {
             rileyLinkBLE.disconnect()

@@ -144,7 +144,21 @@ class RileyLinkBLE(
         else true
     }
 
+    /**
+     * True when the app has been asked to leave the RileyLink alone for a while.
+     *
+     * A disconnect on its own does not free the device: the driver reconnects within seconds.
+     * Refusing to open a link is the half that makes the release mean anything.
+     */
+    private fun refuseWhileReleased(what: String): Boolean {
+        if (!rileyLinkServiceData.isReleased) return false
+        val left = rileyLinkServiceData.release.minutesLeft(System.currentTimeMillis())
+        aapsLogger.info(LTag.PUMPBTCOMM, "$what refused: the RileyLink is released for $left more minute(s)")
+        return true
+    }
+
     fun findRileyLink(rileyLinkAddress: String) {
+        if (refuseWhileReleased("findRileyLink")) return
         aapsLogger.debug(LTag.PUMPBTCOMM, "RileyLink address: $rileyLinkAddress")
         // Must verify that this is a valid MAC, or crash.
         //macAddress = RileyLinkAddress;
@@ -161,6 +175,7 @@ class RileyLinkBLE(
     }
 
     fun connectGatt() {
+        if (refuseWhileReleased("connectGatt")) return
         val useScanning = preferences.get(RileylinkBooleanPreferenceKey.OrangeUseScanning)
         if (useScanning) {
             aapsLogger.debug(LTag.PUMPBTCOMM, "Start scan for OrangeLink device.")
@@ -173,6 +188,9 @@ class RileyLinkBLE(
     // This function must be run on UI thread.
     @SuppressLint("HardwareIds")
     fun connectGattInternal() {
+        // Every path to a link comes through here, the OrangeLink scan included, so this is the
+        // one place that has to hold for the release to be real.
+        if (refuseWhileReleased("connectGattInternal")) return
         if (rileyLinkDevice == null) {
             aapsLogger.error(LTag.PUMPBTCOMM, "RileyLink device is null, can't do connectGatt.")
             return

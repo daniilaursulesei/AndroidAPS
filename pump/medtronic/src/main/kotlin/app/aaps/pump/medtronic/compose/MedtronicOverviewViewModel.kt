@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Refresh
@@ -511,6 +512,12 @@ class MedtronicOverviewViewModel(
                 onClick = { openTestMode() }
             ),
             PumpAction(
+                label = releaseLabel(),
+                icon = Icons.Filled.BluetoothDisabled,
+                category = ActionCategory.MANAGEMENT,
+                onClick = { onReleaseClicked() }
+            ),
+            PumpAction(
                 label = rh.gs(R.string.medtronic_custom_action_reset_rileylink),
                 icon = Icons.Filled.RestartAlt,
                 category = ActionCategory.MANAGEMENT,
@@ -525,6 +532,37 @@ class MedtronicOverviewViewModel(
     // endregion
 
     // region Action handlers
+
+    /** The button says what it will do next: hand the RileyLink over, or take it back. */
+    private fun releaseLabel(): String {
+        val left = rileyLinkServiceData.release.minutesLeft(System.currentTimeMillis())
+        return if (left > 0) rh.gs(RileyLinkR.string.rileylink_release_resume, left)
+        else rh.gs(RileyLinkR.string.rileylink_release)
+    }
+
+    /**
+     * Hands the RileyLink to something else for a few minutes, or takes it back.
+     *
+     * A RileyLink takes one Bluetooth connection at a time, so while this app holds it nothing
+     * else can reach it. The pump is not managed during the hold, which is why the hold is short
+     * and ends on its own.
+     */
+    private fun onReleaseClicked() {
+        val service = medtronicPumpPlugin.rileyLinkService
+        if (service == null) {
+            emitNotConfiguredDialog()
+            return
+        }
+        // releaseRileyLink and resumeRileyLink both change the service state, which is already
+        // one of the things uiState is built from, so the label updates without asking.
+        if (rileyLinkServiceData.release.minutesLeft(System.currentTimeMillis()) > 0) {
+            service.resumeRileyLink()
+            _events.tryEmit(MedtronicOverviewEvent.ShowSnackbar(rh.gs(RileyLinkR.string.rileylink_release_resumed)))
+        } else {
+            val held = service.releaseRileyLink()
+            _events.tryEmit(MedtronicOverviewEvent.ShowSnackbar(rh.gs(RileyLinkR.string.rileylink_released, held)))
+        }
+    }
 
     private fun onRefreshClicked() {
         if (medtronicPumpPlugin.rileyLinkService?.verifyConfiguration() != true) {
