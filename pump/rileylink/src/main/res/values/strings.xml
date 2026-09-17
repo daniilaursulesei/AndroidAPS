@@ -152,6 +152,9 @@ Only continue if the pump is off the body.</string>
     <string name="rileylink_diag_test_armed_hint">The next matching operation will fail on purpose. Clears itself after two minutes.</string>
     <string name="rileylink_diag_test_disarm">Cancel test</string>
 
+    <string name="rileylink_diag_blocked" comment="%1$s=RileyLink name and address. Example: RileyLink blocked: EmaLink (FF:FF:FF:FF:FF:FF)">RileyLink blocked: %1$s</string>
+    <string name="rileylink_diag_blocked_hint">No radio command is sent while it is blocked, so the lines below stop changing. Unblock it from the pump screen to use it again.</string>
+    <string name="rileylink_diag_writes_blocked">Refused while blocked</string>
     <string name="rileylink_block_status">RileyLink blocked</string>
     <string name="rileylink_block_status_value" comment="%1$s=RileyLink name, %2$s=its MAC address. Example: EmaLink (FF:FF:FF:FF:FF:FF)">%1$s (%2$s)</string>
     <string name="rileylink_block_button">Block a RileyLink</string>

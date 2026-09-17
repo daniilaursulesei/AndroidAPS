@@ -100,6 +100,8 @@ data class RileyLinkDiagSnapshot(
     val radioStats: RadioStats? = null,
     /** Times the radio chip restarted on its own, seen as its uptime going backwards. */
     val radioResets: Int = 0,
+    /** Radio commands refused because the RileyLink is blocked. */
+    val writesWhileBlocked: Int = 0,
     /** Most recent markers, newest first. Capped at [RileyLinkDiag.EVENT_HISTORY]. */
     val events: List<RileyLinkDiagEvent> = emptyList()
 )
@@ -443,6 +445,23 @@ class RileyLinkDiag(
     fun writeRefusedLinkDown(operation: String) {
         _snapshot.update { it.copy(writesWhileLinkDown = it.writesWhileLinkDown + 1) }
         markWarn("LINK_REFUSED", "op" to operation, "reason" to "linkDown", "count" to _snapshot.value.writesWhileLinkDown)
+    }
+
+    /**
+     * A radio command was refused because the RileyLink is blocked.
+     *
+     * Counted and marked rather than dropped in silence. While a block is on, every command stops
+     * before it reaches the radio, so the TX and RX markers stop with it and the diagnostics card
+     * has nothing left to show. A card that has gone blank looks exactly like a broken one, so the
+     * block has to say that it is the reason.
+     */
+    @Synchronized
+    fun writeRefusedBlocked(operation: String, macAddress: String?) {
+        _snapshot.update { it.copy(writesWhileBlocked = it.writesWhileBlocked + 1) }
+        markWarn(
+            "BLOCKED", "op" to operation, "device" to (macAddress ?: "-"),
+            "count" to _snapshot.value.writesWhileBlocked
+        )
     }
 
     /** A GATT operation waited its full timeout without any callback. */

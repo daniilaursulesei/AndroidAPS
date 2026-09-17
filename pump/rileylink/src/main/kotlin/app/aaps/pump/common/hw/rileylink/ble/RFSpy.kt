@@ -286,6 +286,7 @@ class RFSpy(
         // handled upstream.
         if (rileyLinkServiceData.isCurrentDeviceBlocked) {
             aapsLogger.info(LTag.PUMPBTCOMM, "$opName refused: the RileyLink is blocked")
+            diag.writeRefusedBlocked(opName, rileyLinkServiceData.rileyLinkAddress ?: rileyLinkServiceData.blockList.configuredAddress())
             return null
         }
         val askedAt = System.currentTimeMillis()

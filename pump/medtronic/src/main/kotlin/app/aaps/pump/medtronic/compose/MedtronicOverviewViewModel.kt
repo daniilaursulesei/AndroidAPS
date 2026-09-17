@@ -202,6 +202,8 @@ class MedtronicOverviewViewModel(
             unexpectedDisconnects = snapshot.unexpectedDisconnects,
             gattWriteTimeouts = snapshot.gattWriteTimeouts,
             writesRefused = snapshot.writesWhileLinkDown,
+            blockedDevice = blockedDeviceLabel(),
+            writesWhileBlocked = snapshot.writesWhileBlocked,
             versionSlips = snapshot.versionSlipsSeen,
             concurrentInitPeak = snapshot.concurrentInitPeak,
             armedFault = faultInjector.armed.value?.title,
@@ -301,7 +303,7 @@ class MedtronicOverviewViewModel(
             add(
                 PumpInfoRow(
                     label = rh.gs(RileyLinkR.string.rileylink_block_status),
-                    value = rh.gs(RileyLinkR.string.rileylink_block_status_value, device.name, device.address),
+                    value = describeDevice(device),
                     level = StatusLevel.CRITICAL
                 )
             )
@@ -609,6 +611,32 @@ class MedtronicOverviewViewModel(
     private fun nameFor(address: String, configured: String?): String {
         if (address != configured) return address
         return rileyLinkServiceData.blockList.configuredName() ?: address
+    }
+
+    /** Name and address together, the one way a RileyLink is written for the user. */
+    private fun describeDevice(device: BlockableRileyLink): String =
+        rh.gs(RileyLinkR.string.rileylink_block_status_value, device.name, device.address)
+
+    /**
+     * The blocked RileyLink for the diagnostics banner, or null when none is blocked.
+     *
+     * Read live rather than from the diagnostics snapshot, because the snapshot only learns about
+     * a block when a command is refused, and the card has to say "blocked" straight away rather
+     * than after the next command happens to come along.
+     */
+    private fun blockedDeviceLabel(): String? {
+        if (!rileyLinkServiceData.isCurrentDeviceBlocked) return null
+        val blockList = rileyLinkServiceData.blockList
+        val address = rileyLinkServiceData.rileyLinkAddress ?: blockList.configuredAddress() ?: return null
+        val configured = blockList.configuredAddress()
+        return describeDevice(
+            BlockableRileyLink(
+                address = address,
+                name = nameFor(address, configured),
+                isBlocked = true,
+                isInUse = address == configured
+            )
+        )
     }
 
     /** Blocks the chosen RileyLink, or unblocks it when it is already blocked. */

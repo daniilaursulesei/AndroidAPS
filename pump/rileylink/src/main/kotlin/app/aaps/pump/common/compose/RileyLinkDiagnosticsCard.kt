@@ -69,6 +69,10 @@ data class RileyLinkDiagnosticsUiState(
     val unexpectedDisconnects: Int,
     val gattWriteTimeouts: Int,
     val writesRefused: Int,
+    /** The blocked RileyLink, ready to show, or null when none is blocked. Drives the banner. */
+    val blockedDevice: String?,
+    /** Radio commands refused because of that block. */
+    val writesWhileBlocked: Int,
     val versionSlips: Int,
     val concurrentInitPeak: Int,
     val events: List<DiagEventLine>,
@@ -137,6 +141,31 @@ fun RileyLinkDiagnosticsCard(
 
             // Test mode changes how the app behaves, so it must never be possible to look at this
             // card and not know it is on.
+            // Shown first and shown loudly. While this is here every radio command is refused, so
+            // every live line below stops moving. Without this the card looks broken rather than
+            // blocked, which is exactly the wrong conclusion to hand somebody debugging a radio.
+            state.blockedDevice?.let { device ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(AapsTheme.generalColors.statusCritical, RoundedCornerShape(AapsSpacing.small))
+                        .padding(AapsSpacing.medium),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.rileylink_diag_blocked, device),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onError
+                    )
+                    Text(
+                        text = stringResource(R.string.rileylink_diag_blocked_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onError
+                    )
+                }
+            }
+
             state.armedFault?.let { fault ->
                 Column(
                     modifier = Modifier
@@ -265,6 +294,7 @@ fun RileyLinkDiagnosticsCard(
             ValueRow(stringResource(R.string.rileylink_diag_unexpected_disconnects), state.unexpectedDisconnects.toString())
             ValueRow(stringResource(R.string.rileylink_diag_gatt_timeouts), state.gattWriteTimeouts.toString())
             ValueRow(stringResource(R.string.rileylink_diag_writes_refused), state.writesRefused.toString())
+            ValueRow(stringResource(R.string.rileylink_diag_writes_blocked), state.writesWhileBlocked.toString())
             ValueRow(stringResource(R.string.rileylink_diag_version_slips), state.versionSlips.toString())
             ValueRow(stringResource(R.string.rileylink_diag_concurrent_init_peak), state.concurrentInitPeak.toString())
 
@@ -313,6 +343,7 @@ fun RileyLinkDiagnosticsCard(
  */
 private fun buildPlainText(state: RileyLinkDiagnosticsUiState): String = buildString {
     appendLine("RileyLink diagnostics")
+    state.blockedDevice?.let { appendLine("RILEYLINK BLOCKED: $it") }
     state.armedFault?.let { appendLine("TEST MODE ARMED: $it") }
     appendLine("BLE113: ${state.ble113Version ?: if (state.linkUp) "connected" else "not connected"}")
     appendLine("CC1110: ${state.chipState}" + if (state.chipState == ChipState.SILENT) " (${state.silentStreak} unanswered, since ${state.silentSince})" else "")
@@ -326,7 +357,7 @@ private fun buildPlainText(state: RileyLinkDiagnosticsUiState): String = buildSt
     appendLine()
     appendLine("GATT operation: ${if (state.gattBusy) "busy" else "idle"}")
     appendLine("Reader queue: ${state.readerQueue}   Pending notifications: ${state.pendingPermits}   Command queue: ${state.commandQueue}")
-    appendLine("Unexpected disconnects: ${state.unexpectedDisconnects}   GATT timeouts: ${state.gattWriteTimeouts}   Refused while link down: ${state.writesRefused}")
+    appendLine("Unexpected disconnects: ${state.unexpectedDisconnects}   GATT timeouts: ${state.gattWriteTimeouts}   Refused while link down: ${state.writesRefused}   Refused while blocked: ${state.writesWhileBlocked}")
     appendLine("Version bit slips: ${state.versionSlips}   Most inits at once: ${state.concurrentInitPeak}")
     appendLine()
     appendLine("Live events, newest first:")
