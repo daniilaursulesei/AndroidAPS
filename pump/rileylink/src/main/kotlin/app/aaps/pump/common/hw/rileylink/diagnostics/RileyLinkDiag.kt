@@ -3,6 +3,7 @@ package app.aaps.pump.common.hw.rileylink.diagnostics
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.utils.pump.ByteUtil
+import app.aaps.pump.common.hw.rileylink.ble.data.RadioStats
 import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkEncodingType
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
@@ -11,7 +12,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.abs
 
 /** Where the firmware version in use came from. */
 enum class VersionSource {
@@ -95,6 +98,12 @@ data class RileyLinkDiagSnapshot(
     val radioTurnsMissed: Int = 0,
     /** Replies found in the queue before a command was sent, so they belong to nothing. */
     val radioJunkDrained: Int = 0,
+    /** The radio chip's counters, as last read. Null when they have never been read. */
+    val radioStats: RadioStats? = null,
+    /** Times the radio chip restarted on its own, seen as its uptime going backwards. */
+    val radioResets: Int = 0,
+    /** Times a frequency was written and read back as something else. */
+    val frequencyMismatches: Int = 0,
     /** Most recent markers, newest first. Capped at [RileyLinkDiag.EVENT_HISTORY]. */
     val events: List<RileyLinkDiagEvent> = emptyList()
 )
@@ -344,6 +353,80 @@ class RileyLinkDiag(
 
     // endregion
 
+    // region radio health
+
+    /** The counters from the previous [radioStats] call, for the deltas. */
+    private var lastStats: RadioStats? = null
+
+    /**
+     * The radio chip's own counters, with what changed since the last read.
+     *
+     * The deltas are the useful part. A stretch where the pump said nothing is either "sent
+     * climbed, received did not", which puts the fault past the RileyLink's antenna, or "sent did
+     * not climb", which puts it inside the RileyLink. From a timeout alone the two are identical.
+     *
+     * Packets sent counts one per transmission, so a wake up that repeats its packet 200 times is
+     * expected to add 201.
+     *
+     * @param reason where the app was in its own sequence when it read them.
+     * @param stats the counters, or null when the radio did not answer with a whole reply.
+     * @param raw what did come back, so an unreadable reply is still in the log.
+     */
+    @Synchronized
+    fun radioStats(reason: String, stats: RadioStats?, raw: ByteArray?) {
+        if (stats == null) {
+            markWarn("RADIO_STATS", "reason" to reason, "result" to "UNREADABLE", "hex" to ByteUtil.shortHexString(raw))
+            return
+        }
+        val previous = lastStats
+        // Every counter lives in the chip, so a restart zeroes them all and the deltas from
+        // before it are not differences in anything.
+        val restarted = previous != null && stats.uptimeMs < previous.uptimeMs
+        if (restarted) _snapshot.update { it.copy(radioResets = it.radioResets + 1) }
+        val sentDelta = if (previous == null || restarted) null else stats.packetsSent - previous.packetsSent
+        val rxDelta = if (previous == null || restarted) null else stats.packetsReceived - previous.packetsReceived
+        lastStats = stats
+        _snapshot.update { it.copy(radioStats = stats) }
+        val line = arrayOf<Pair<String, Any?>>(
+            "reason" to reason,
+            "uptimeMs" to stats.uptimeMs,
+            "sent" to stats.packetsSent,
+            "received" to stats.packetsReceived,
+            "sentDelta" to (sentDelta ?: "-"),
+            "receivedDelta" to (rxDelta ?: "-"),
+            "rxOverflow" to stats.rxOverflow,
+            "rxFifoOverflow" to stats.rxFifoOverflow,
+            "chipRestarted" to restarted
+        )
+        if (restarted) record(DiagSeverity.WARN, "RADIO_STATS", line)
+        else record(DiagSeverity.INFO, "RADIO_STATS", line)
+    }
+
+    /**
+     * A frequency was written, and what the registers held afterwards.
+     *
+     * @param askedMHz what the app wrote.
+     * @param readBackMHz what reading the registers gave, or null when they could not be read.
+     */
+    @Synchronized
+    fun frequencySet(askedMHz: Double, readBackMHz: Double?) {
+        // The registers hold a 24 bit step of about 366 Hz, so the value read back is never
+        // exactly the value asked for. Anything inside one step is the same setting.
+        val matches = readBackMHz != null && abs(readBackMHz - askedMHz) < FREQUENCY_STEP_MHZ
+        if (readBackMHz != null && !matches) {
+            _snapshot.update { it.copy(frequencyMismatches = it.frequencyMismatches + 1) }
+        }
+        val line = arrayOf<Pair<String, Any?>>(
+            "askedMHz" to String.format(Locale.ENGLISH, "%.3f", askedMHz),
+            "readBackMHz" to (readBackMHz?.let { String.format(Locale.ENGLISH, "%.3f", it) } ?: "-"),
+            "match" to if (readBackMHz == null) "UNREADABLE" else matches
+        )
+        if (readBackMHz != null && !matches) record(DiagSeverity.WARN, "FREQ_SET", line)
+        else record(DiagSeverity.INFO, "FREQ_SET", line)
+    }
+
+    // endregion
+
     // region link
 
     /** A GATT connection came up and the RileyLink services were found. */
@@ -407,5 +490,13 @@ class RileyLinkDiag(
          * rebuilding the list on every marker costs nothing. The full history is in the log.
          */
         const val EVENT_HISTORY = 40
+
+        /**
+         * One step of the frequency registers, in MHz.
+         *
+         * The three registers hold a 24 bit number scaled by the 24 MHz crystal over 2^16, which
+         * is about 366 Hz per step, so a frequency read back is never exactly the one written.
+         */
+        const val FREQUENCY_STEP_MHZ = 0.001
     }
 }

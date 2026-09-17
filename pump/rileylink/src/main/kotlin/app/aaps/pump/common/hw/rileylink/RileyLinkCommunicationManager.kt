@@ -101,6 +101,7 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
 
                     if (diff > ALLOWED_PUMP_UNREACHABLE) {
                         aapsLogger.warn(LTag.PUMPBTCOMM, "We reached max time that Pump can be unreachable. Starting Tuning.")
+                        rfspy.readRadioStats("pumpUnreachable")
                         serviceTaskExecutor.startTask(wakeAndTuneTaskProvider())
                         timeoutCount = 0
                     }
@@ -249,6 +250,10 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
 
     private fun scanForDevice(frequencies: DoubleArray): Double {
         aapsLogger.info(LTag.PUMPBTCOMM, String.format(Locale.ENGLISH, "Scanning for receiver (%s)", receiverDeviceID))
+        // A scan is the densest run of transmissions the app ever makes, so reading the radio's
+        // counters either side of it gives the clearest answer to the one question a scan that
+        // finds nothing cannot answer by itself: did this RileyLink transmit at all?
+        rfspy.readRadioStats("beforeScan")
         wakeUp(receiverDeviceAwakeForMinutes, false)
         val results = FrequencyScanResults()
 
@@ -311,6 +316,8 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
         }
 
         aapsLogger.info(LTag.PUMPBTCOMM, stringBuilder.toString())
+
+        rfspy.readRadioStats("afterScan")
 
         results.sort() // sorts in ascending order
 
