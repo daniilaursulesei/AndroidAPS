@@ -43,6 +43,47 @@ class FrequencyTrialTest {
     }
 
     @Test
+    fun `a try that heard nothing scores far below any real reading`() {
+        // The weakest the radio can report is about -84 dBm, so one miss has to outweigh a small
+        // difference in signal strength between two frequencies.
+        assertTrue(FrequencyTrial.NO_ANSWER_RSSI < -84)
+    }
+
+    @Test
+    fun `a frequency that answered every time beats one that missed a try`() {
+        // The real scan from the log: 916.65 answered twice out of three at -70, 916.70 answered
+        // three times out of three. Dropping the miss made 916.65 look better.
+        val missedOne = FrequencyTrial().apply {
+            frequencyMHz = 916.65
+            rssiList.addAll(listOf(-70, -70, FrequencyTrial.NO_ANSWER_RSSI))
+        }
+        val answeredAll = FrequencyTrial().apply {
+            frequencyMHz = 916.70
+            rssiList.addAll(listOf(-71, -70, -70))
+        }
+        missedOne.calculateAverage()
+        answeredAll.calculateAverage()
+
+        assertEquals(-79.667, missedOne.averageRSSI, 0.01)
+        assertEquals(-70.333, answeredAll.averageRSSI, 0.01)
+        assertTrue(answeredAll.averageRSSI > missedOne.averageRSSI)
+    }
+
+    @Test
+    fun `a slightly weaker frequency that never missed still wins`() {
+        val strongerButMissed = FrequencyTrial().apply {
+            rssiList.addAll(listOf(-60, -60, FrequencyTrial.NO_ANSWER_RSSI))
+        }
+        val weakerButComplete = FrequencyTrial().apply {
+            rssiList.addAll(listOf(-75, -75, -75))
+        }
+        strongerButMissed.calculateAverage()
+        weakerButComplete.calculateAverage()
+
+        assertTrue(weakerButComplete.averageRSSI > strongerButMissed.averageRSSI)
+    }
+
+    @Test
     fun `calculateAverage with empty list returns -99`() {
         trial.calculateAverage()
         assertEquals(-99.0, trial.averageRSSI, 0.001)
@@ -235,12 +276,6 @@ class FrequencyTrialTest {
 
         // Verify frequency
         assertEquals(916.55, trial.frequencyMHz, 0.001)
-    }
-
-    @Test
-    fun `averageRSSI2 property exists and can be set`() {
-        trial.averageRSSI2 = -80.5
-        assertEquals(-80.5, trial.averageRSSI2, 0.001)
     }
 
     @Test

@@ -263,7 +263,6 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
             trial.frequencyMHz = frequencies[i]
             rfspy.setBaseFrequency(frequencies[i])
 
-            var sumRSSI = 0
             (0 until tries).forEach { j ->
                 val pumpMsgContent = createPumpMessageContent(RLMessageType.ReadSimpleData)
                 val resp = rfspy.transmitThenReceive(
@@ -272,6 +271,11 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
                 )
                 if (resp?.wasTimeout() == true) {
                     aapsLogger.error(LTag.PUMPBTCOMM, String.format(Locale.ENGLISH, "scanForPump: Failed to find pump at frequency %.3f", frequencies[i]))
+                    // A try that heard nothing is the worst result there is, so it has to score
+                    // like one. Leaving it out made the average a measure of the tries that
+                    // happened to work, which let a frequency that answered twice out of three
+                    // beat one that answered every time.
+                    trial.rssiList.add(FrequencyTrial.NO_ANSWER_RSSI)
                 } else if (resp?.looksLikeRadioPacket() == true) {
                     val radioResponse = radioResponseProvider()
 
@@ -279,27 +283,22 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
                         radioResponse.init(resp.raw)
 
                         if (radioResponse.isValid()) {
-                            val rssi = calculateRssi(radioResponse.rssi)
-                            sumRSSI += rssi
-                            trial.rssiList.add(rssi)
+                            trial.rssiList.add(calculateRssi(radioResponse.rssi))
                             trial.successes++
                         } else {
                             aapsLogger.warn(LTag.PUMPBTCOMM, "Failed to parse radio response: " + shortHexString(resp.raw))
-                            trial.rssiList.add(-99)
+                            trial.rssiList.add(FrequencyTrial.NO_ANSWER_RSSI)
                         }
                     } catch (_: RileyLinkCommunicationException) {
                         aapsLogger.warn(LTag.PUMPBTCOMM, "Failed to decode radio response: " + shortHexString(resp.raw))
-                        trial.rssiList.add(-99)
+                        trial.rssiList.add(FrequencyTrial.NO_ANSWER_RSSI)
                     }
                 } else {
                     aapsLogger.error(LTag.PUMPBTCOMM, "scanForPump: raw response is " + shortHexString(resp?.raw))
-                    trial.rssiList.add(-99)
+                    trial.rssiList.add(FrequencyTrial.NO_ANSWER_RSSI)
                 }
                 trial.tries++
             }
-            sumRSSI = (sumRSSI + -99.0 * (trial.tries - trial.successes)).toInt()
-            trial.averageRSSI2 = (sumRSSI).toDouble() / (trial.tries).toDouble()
-
             trial.calculateAverage()
 
             results.trials.add(trial)
