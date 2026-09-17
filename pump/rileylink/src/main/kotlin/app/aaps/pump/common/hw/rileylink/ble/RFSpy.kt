@@ -300,7 +300,16 @@ class RFSpy(
         radioHolderOp = opName
         transactionsInFlight.incrementAndGet()
         try {
-            return writeToDataRawInner(bytes, responseTimeoutMs, opName)
+            // The markers go here, inside the lock, so their order in the log is the order on
+            // the wire. Recording the command before waiting for a turn logged what a caller
+            // meant to do, which reads as two commands overlapping when in fact one of them was
+            // still queued. The wait itself is already reported by RADIO_TURN, so the time
+            // measured here is the radio's, not the queue's.
+            diag.tx(opName, bytes, rileyLinkServiceData.firmwareVersion.usesV2Protocol(), describeForRadio(bytes))
+            val startedAt = System.currentTimeMillis()
+            val raw = writeToDataRawInner(bytes, responseTimeoutMs, opName)
+            diag.rx(opName, raw, System.currentTimeMillis() - startedAt)
+            return raw
         } finally {
             transactionsInFlight.decrementAndGet()
             radioHolder = null
@@ -346,11 +355,7 @@ class RFSpy(
     private fun writeToData(command: RileyLinkCommand, responseTimeoutMs: Int): RFSpyResponse? {
         val bytes = command.getRaw()
         val commandName = command.getCommandType().name
-        diag.tx(commandName, bytes, rileyLinkServiceData.firmwareVersion.usesV2Protocol(), describeForRadio(bytes))
-
-        val startedAt = System.currentTimeMillis()
         val rawResponse = writeToDataRaw(bytes, responseTimeoutMs, commandName)
-        diag.rx(commandName, rawResponse, System.currentTimeMillis() - startedAt)
 
         if (rawResponse == null) {
             aapsLogger.error(LTag.PUMPBTCOMM, "writeToData: No response from RileyLink")
