@@ -306,6 +306,15 @@ interface Pump {
     fun isUnreachableAlertTimeoutExceeded(unreachableTimeoutMilliseconds: Long): Boolean = false
 
     /**
+     * True when the user has told this driver to stay off the pump on purpose.
+     *
+     * Treated like a pump the user disconnected by hand: the pump really is out of reach, but
+     * that is what was asked for, so the unreachable alarm would only repeat back a choice the
+     * user already made. Drivers that have no such setting leave this alone.
+     */
+    fun isConnectionBlockedOnPurpose(): Boolean = false
+
+    /**
      * if true APS set 100% basal before full hour to avoid pump beeping
      */
     fun setNeutralTempAtFullHour(): Boolean = false

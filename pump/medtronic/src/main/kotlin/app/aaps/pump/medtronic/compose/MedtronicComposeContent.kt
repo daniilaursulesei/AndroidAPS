@@ -35,6 +35,7 @@ import app.aaps.core.ui.compose.ToolbarConfig
 import app.aaps.core.ui.compose.dialogs.OkDialog
 import app.aaps.core.ui.compose.pump.BlePreCheckHost
 import app.aaps.core.ui.compose.pump.PumpOverviewScreen
+import app.aaps.pump.common.compose.RileyLinkBlockDialog
 import app.aaps.pump.common.compose.RileyLinkDiagnosisDialog
 import app.aaps.pump.common.compose.RileyLinkDiagnosticsCard
 import app.aaps.pump.common.compose.RileyLinkTestModePickerDialog
@@ -146,6 +147,15 @@ class MedtronicComposeContent(
         // Dialog
         if (showDialog) {
             OkDialog(title = dialogTitle, message = dialogMessage, onDismiss = { showDialog = false })
+        }
+
+        val blockPickerDevices by overviewViewModel.blockPicker.collectAsStateWithLifecycle()
+        blockPickerDevices?.let { devices ->
+            RileyLinkBlockDialog(
+                devices = devices,
+                onToggle = overviewViewModel::toggleBlock,
+                onDismiss = overviewViewModel::dismissBlockPicker
+            )
         }
 
         val diagnosisState by overviewViewModel.diagnosis.collectAsStateWithLifecycle()

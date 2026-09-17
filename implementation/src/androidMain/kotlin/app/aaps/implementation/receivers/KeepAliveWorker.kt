@@ -262,7 +262,11 @@ class KeepAliveWorker(
         // plenty of tolerance.
         val runningMode = loop.runningMode()
         if (lastReadStatus != 0L && (now - lastReadStatus).coerceIn(minimumValue = 0, maximumValue = null) <= T.secs(5 * 60 + 30).msecs()) {
-            localAlertUtils.checkPumpUnreachableAlarm(lastConnection, isStatusOutdated, runningMode == RM.Mode.DISCONNECTED_PUMP)
+            // A driver that was told to stay off the pump counts as disconnected here. Without it
+            // the alarm repeats a choice the user made on purpose, every threshold, until they
+            // undo it.
+            val offOnPurpose = runningMode == RM.Mode.DISCONNECTED_PUMP || pump.isConnectionBlockedOnPurpose()
+            localAlertUtils.checkPumpUnreachableAlarm(lastConnection, isStatusOutdated, offOnPurpose)
         }
         if (runningMode == RM.Mode.DISCONNECTED_PUMP) {
             // do nothing if pump is disconnected

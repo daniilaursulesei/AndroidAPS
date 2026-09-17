@@ -145,20 +145,26 @@ class RileyLinkBLE(
     }
 
     /**
-     * True when the app has been asked to leave the RileyLink alone for a while.
+     * True when the app must leave this RileyLink alone.
      *
-     * A disconnect on its own does not free the device: the driver reconnects within seconds.
-     * Refusing to open a link is the half that makes the release mean anything.
+     * A disconnect on its own does not free the device: the client is created with autoConnect, so
+     * the Android stack brings the link back within seconds with no call from this app. Refusing to
+     * open a link is the half that makes a block mean anything.
+     *
+     * [address] is the device about to be opened. When the caller does not have one, the live
+     * address is used, and then the configured address, because a deliberate disconnect clears the
+     * live one and "not connected right now" must not read as "not blocked".
      */
-    private fun refuseWhileReleased(what: String): Boolean {
-        if (!rileyLinkServiceData.isReleased) return false
-        val held = rileyLinkServiceData.release.minutesHeld(System.currentTimeMillis())
-        aapsLogger.info(LTag.PUMPBTCOMM, "$what refused: the RileyLink has been released for $held minute(s)")
+    private fun refuseBlocked(what: String, address: String? = null): Boolean {
+        val blockList = rileyLinkServiceData.blockList
+        val mac = address ?: rileyLinkServiceData.rileyLinkAddress ?: blockList.configuredAddress()
+        if (!blockList.isBlocked(mac)) return false
+        aapsLogger.info(LTag.PUMPBTCOMM, "$what refused: $mac is blocked. Unblock it on the Medtronic screen to use it again.")
         return true
     }
 
     fun findRileyLink(rileyLinkAddress: String) {
-        if (refuseWhileReleased("findRileyLink")) return
+        if (refuseBlocked("findRileyLink", rileyLinkAddress)) return
         aapsLogger.debug(LTag.PUMPBTCOMM, "RileyLink address: $rileyLinkAddress")
         // Must verify that this is a valid MAC, or crash.
         //macAddress = RileyLinkAddress;
@@ -175,7 +181,7 @@ class RileyLinkBLE(
     }
 
     fun connectGatt() {
-        if (refuseWhileReleased("connectGatt")) return
+        if (refuseBlocked("connectGatt")) return
         val useScanning = preferences.get(RileylinkBooleanPreferenceKey.OrangeUseScanning)
         if (useScanning) {
             aapsLogger.debug(LTag.PUMPBTCOMM, "Start scan for OrangeLink device.")
@@ -189,8 +195,8 @@ class RileyLinkBLE(
     @SuppressLint("HardwareIds")
     fun connectGattInternal() {
         // Every path to a link comes through here, the OrangeLink scan included, so this is the
-        // one place that has to hold for the release to be real.
-        if (refuseWhileReleased("connectGattInternal")) return
+        // one place that has to hold for a block to be real.
+        if (refuseBlocked("connectGattInternal", rileyLinkDevice?.address)) return
         if (rileyLinkDevice == null) {
             aapsLogger.error(LTag.PUMPBTCOMM, "RileyLink device is null, can't do connectGatt.")
             return
@@ -237,17 +243,17 @@ class RileyLinkBLE(
      * reconnect.
      */
     @SuppressLint("MissingPermission")
-    fun releaseLink() {
+    fun dropLinkForBlock() {
         isConnected = false
         // Not a manual disconnect in the bookkeeping sense: the client is closed here and now,
         // so there is no callback left to do it, and leaving the flag set would make the next
         // genuine drop look like one this app asked for.
         manualDisconnect = false
-        aapsLogger.warn(LTag.PUMPBTCOMM, "Releasing the RileyLink: closing the Bluetooth client so it cannot reconnect by itself")
+        aapsLogger.warn(LTag.PUMPBTCOMM, "Blocking the RileyLink: closing the Bluetooth client so it cannot reconnect by itself")
         try {
             bluetoothConnectionGatt?.disconnect()
         } catch (e: Exception) {
-            aapsLogger.error(LTag.PUMPBTCOMM, "disconnect while releasing: ${e.javaClass.simpleName}: ${e.message}")
+            aapsLogger.error(LTag.PUMPBTCOMM, "disconnect while blocking: ${e.javaClass.simpleName}: ${e.message}")
         }
         close()
     }

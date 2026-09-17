@@ -435,19 +435,28 @@ class MedtronicPumpPlugin(
     }
 
     /**
-     * True while the RileyLink has been handed to something else for a few minutes.
+     * True while the RileyLink this app uses is blocked.
      *
-     * Stops the refresh loop from trying, so the release is quiet in the log instead of a run
-     * of failures, and so nothing queues a tune up over it.
+     * Stops the refresh loop from trying, so a block is quiet in the log instead of a run of
+     * failures, and so nothing queues a tune up over it.
      */
     override fun isInPreventConnectMode(): Boolean {
-        val held = rileyLinkServiceData.isReleased
+        val blocked = rileyLinkServiceData.isConfiguredBlocked
         // This runs on the driver's own minute tick, which is the only regular beat available.
         // Closing the Bluetooth client is what stops Android reconnecting on its own, so once the
-        // hold is over something has to open the link again, and this is it.
-        if (!held) rileyLinkMedtronicService?.reopenAfterRelease()
-        return held
+        // block is gone something has to open the link again, and this is it.
+        if (!blocked) rileyLinkMedtronicService?.reopenAfterUnblock()
+        return blocked
     }
+
+    /**
+     * A blocked RileyLink is a pump the user put out of reach on purpose, so it raises no alarm.
+     *
+     * The block is deliberate and it is shown on the Medtronic screen for as long as it lasts, so
+     * it cannot be forgotten. Repeating it as an urgent alarm every half hour would only train the
+     * user to ignore that alarm.
+     */
+    override fun isConnectionBlockedOnPurpose(): Boolean = rileyLinkServiceData.isConfiguredBlocked
 
     private val isPumpNotReachable: Boolean
         get() {

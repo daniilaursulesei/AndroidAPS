@@ -152,51 +152,81 @@ abstract class RileyLinkService : Service() {
     abstract fun setPumpDeviceState(pumpDeviceState: PumpDeviceState)
 
     /**
-     * Drops the Bluetooth link and keeps the app off the RileyLink until it is told otherwise.
+     * Blocks a RileyLink and drops the link to it, for as long as it takes.
      *
-     * For handing the RileyLink to something else - a laptop running a bench test, a second
-     * phone. It takes one connection at a time, so nothing else can reach it until this app lets
-     * go, and a plain disconnect is undone by the next reconnect a few seconds later.
+     * For handing a RileyLink to something else - a laptop running a bench test, a second phone.
+     * It takes one Bluetooth connection at a time, so nothing else can reach it until this app
+     * lets go, and a plain disconnect is undone by the next reconnect a few seconds later.
      *
-     * The stored address is kept, so this is not an unpair. The hold does not expire: a bench
-     * session takes as long as it takes, and a window that ran out in the middle of one would
-     * take the RileyLink back while it was in use. Nothing manages the pump until [resumeRileyLink].
+     * The block is stored on the device and is kept per MAC address, so it survives a restart and
+     * it can never reach a RileyLink other than the one named. The stored address is kept, so this
+     * is not an unpair. Nothing manages the pump while its RileyLink is blocked.
+     *
+     * @param macAddress the RileyLink to block. Null means the one this app is set up to use.
      */
-    fun releaseRileyLink() {
-        rileyLinkServiceData.release.hold(System.currentTimeMillis())
-        aapsLogger.info(LTag.PUMPBTCOMM, "RileyLink released. The app will not connect to it until it is taken back.")
+    fun blockRileyLink(macAddress: String? = null) {
+        val blockList = rileyLinkServiceData.blockList
+        val mac = RileyLinkBlockList.normalise(macAddress) ?: blockList.configuredAddress()
+        if (mac == null) {
+            aapsLogger.error(LTag.PUMPBTCOMM, "Cannot block: no RileyLink address is stored")
+            return
+        }
+        blockList.block(mac)
+        aapsLogger.info(LTag.PUMPBTCOMM, "RileyLink $mac blocked. The app will not connect to it until it is unblocked.")
+
+        // Only let go of the live link when the device just blocked is the one this app is on.
+        // Blocking a RileyLink that is not in use must not knock out the one that is.
+        val live = rileyLinkServiceData.rileyLinkAddress ?: blockList.configuredAddress()
+        if (!blockList.isBlocked(live)) return
+        rileyLinkServiceData.needsReopen = true
         // Unconditionally, not only when this app thinks it is connected. The Bluetooth client is
         // created with autoConnect, so the Android stack re-establishes the link on its own, and
         // isConnected is false in exactly the case where it is waiting to do so.
-        rileyLinkBLE.releaseLink()
+        rileyLinkBLE.dropLinkForBlock()
         rileyLinkServiceData.setServiceState(RileyLinkServiceState.BluetoothReady)
     }
 
-    /** Ends the hold and opens the link again. */
-    fun resumeRileyLink() {
-        rileyLinkServiceData.release.release()
-        aapsLogger.info(LTag.PUMPBTCOMM, "RileyLink taken back.")
-        reopenAfterRelease()
+    /**
+     * Unblocks a RileyLink and opens the link again if it is the one in use.
+     *
+     * @param macAddress the RileyLink to unblock. Null means the one this app is set up to use.
+     */
+    fun unblockRileyLink(macAddress: String? = null) {
+        val blockList = rileyLinkServiceData.blockList
+        val mac = RileyLinkBlockList.normalise(macAddress) ?: blockList.configuredAddress()
+        if (mac == null) {
+            aapsLogger.error(LTag.PUMPBTCOMM, "Cannot unblock: no RileyLink address is stored")
+            return
+        }
+        blockList.unblock(mac)
+        aapsLogger.info(LTag.PUMPBTCOMM, "RileyLink $mac unblocked.")
+        // The unblock itself has to ask for the link back. needsReopen is only in memory, so a
+        // block that outlived a restart left it false, and without this the link would never come
+        // back. Only when there is no link: opening one on top of a live one would leave a second
+        // Bluetooth client behind.
+        if (!blockList.isConfiguredBlocked() && !rileyLinkBLE.isConnected) rileyLinkServiceData.needsReopen = true
+        reopenAfterUnblock()
     }
 
     /**
-     * Opens the link again once the hold is lifted.
+     * Opens the link again once the block on the RileyLink in use is gone.
      *
      * Closing the Bluetooth client is what stops the stack reconnecting, so nothing brings the
-     * link back by itself and this has to. Safe to call on a timer: it does nothing unless a hold
-     * closed the link and that hold has been lifted.
+     * link back by itself and this has to. Safe to call on a timer: it does nothing unless a block
+     * closed the link and that block has been lifted.
      */
-    fun reopenAfterRelease() {
-        val release = rileyLinkServiceData.release
-        if (!release.shouldReconnect()) return
-        release.reconnected()
-        val address = rileyLinkServiceData.rileyLinkAddress
+    fun reopenAfterUnblock() {
+        if (!rileyLinkServiceData.needsReopen) return
+        val blockList = rileyLinkServiceData.blockList
+        if (blockList.isConfiguredBlocked()) return
+        rileyLinkServiceData.needsReopen = false
+        val address = rileyLinkServiceData.rileyLinkAddress ?: blockList.configuredAddress()
         if (address == null) {
-            aapsLogger.error(LTag.PUMPBTCOMM, "Hold lifted but no RileyLink address is stored, cannot reconnect")
+            aapsLogger.error(LTag.PUMPBTCOMM, "Block lifted but no RileyLink address is stored, cannot reconnect")
             rileyLinkServiceData.setServiceState(RileyLinkServiceState.BluetoothReady)
             return
         }
-        aapsLogger.info(LTag.PUMPBTCOMM, "Hold lifted, connecting to $address again")
+        aapsLogger.info(LTag.PUMPBTCOMM, "Block lifted, connecting to $address again")
         rileyLinkServiceData.setServiceState(RileyLinkServiceState.RileyLinkInitializing)
         rileyLinkBLE.findRileyLink(address)
     }

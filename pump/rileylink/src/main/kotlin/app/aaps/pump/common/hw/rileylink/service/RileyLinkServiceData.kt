@@ -24,19 +24,27 @@ import dev.zacsweers.metro.SingleIn
 class RileyLinkServiceData(
     private val aapsLogger: AAPSLogger,
     private val rileyLinkUtil: RileyLinkUtil,
-    private val rxBus: RxBus
+    private val rxBus: RxBus,
+    /**
+     * The RileyLinks this app must leave alone.
+     *
+     * Lives here because both the Bluetooth layer, which must refuse to connect, and the pump
+     * driver, which must stop asking, need to read the same list.
+     */
+    val blockList: RileyLinkBlockList
 ) {
 
     /**
-     * A hold that keeps the app off the RileyLink so something else can use it.
+     * True when the link was closed because of a block and has not been opened again.
      *
-     * Lives here because both the Bluetooth layer, which must refuse to connect, and the pump
-     * driver, which must stop asking, need to see the same hold.
+     * The block itself is stored on the device, but this is only about the Bluetooth client that
+     * was closed a moment ago, and it is right for it to be forgotten on a restart: a fresh start
+     * opens the link through the normal path anyway.
      */
-    val release = RileyLinkRelease()
+    var needsReopen: Boolean = false
 
-    /** True while the app should not touch the RileyLink. */
-    val isReleased: Boolean get() = release.isHeld
+    /** True when the RileyLink this app is set up to use is blocked. */
+    val isConfiguredBlocked: Boolean get() = blockList.isConfiguredBlocked()
 
     var tuneUpDone = false
     var rileyLinkError: RileyLinkError? = null

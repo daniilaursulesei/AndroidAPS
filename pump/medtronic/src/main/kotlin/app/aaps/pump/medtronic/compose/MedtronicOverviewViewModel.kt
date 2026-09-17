@@ -38,6 +38,7 @@ import app.aaps.pump.common.compose.RileyLinkDiagnosticsUiState
 import app.aaps.pump.common.events.EventRileyLinkDeviceStatusChange
 import app.aaps.pump.common.extensions.stringResource
 import app.aaps.pump.common.hw.rileylink.ble.RFSpy
+import app.aaps.pump.common.compose.BlockableRileyLink
 import app.aaps.pump.common.hw.rileylink.ble.RileyLinkBLE
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkServiceState
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkTargetDevice
@@ -212,6 +213,10 @@ class MedtronicOverviewViewModel(
                 )
             }
         )
+
+    /** The RileyLinks offered by the block picker, or null while it is closed. */
+    private val _blockPicker = MutableStateFlow<List<BlockableRileyLink>?>(null)
+    val blockPicker: StateFlow<List<BlockableRileyLink>?> = _blockPicker
 
     private val _diagnosis = MutableStateFlow(DiagnosisUiState())
 
@@ -512,10 +517,10 @@ class MedtronicOverviewViewModel(
                 onClick = { openTestMode() }
             ),
             PumpAction(
-                label = releaseLabel(),
+                label = blockLabel(),
                 icon = Icons.Filled.BluetoothDisabled,
                 category = ActionCategory.MANAGEMENT,
-                onClick = { onReleaseClicked() }
+                onClick = { onBlockClicked() }
             ),
             PumpAction(
                 label = rh.gs(R.string.medtronic_custom_action_reset_rileylink),
@@ -533,35 +538,93 @@ class MedtronicOverviewViewModel(
 
     // region Action handlers
 
-    /** The button says what it will do next: hand the RileyLink over, or take it back. */
-    private fun releaseLabel(): String {
-        val release = rileyLinkServiceData.release
-        return if (release.isHeld) rh.gs(RileyLinkR.string.rileylink_release_resume, release.minutesHeld(System.currentTimeMillis()))
-        else rh.gs(RileyLinkR.string.rileylink_release)
+    /** The button counts the blocked RileyLinks, so a block cannot be left on without being seen. */
+    private fun blockLabel(): String {
+        val blocked = rileyLinkServiceData.blockList.blocked().size
+        return if (blocked > 0) rh.gs(RileyLinkR.string.rileylink_block_button_active, blocked)
+        else rh.gs(RileyLinkR.string.rileylink_block_button)
     }
 
     /**
-     * Hands the RileyLink to something else, or takes it back.
+     * Opens the picker that asks which RileyLink to block.
      *
-     * A RileyLink takes one Bluetooth connection at a time, so while this app holds it nothing
-     * else can reach it. The hold lasts until this button is pressed again. Nothing manages the
-     * pump while it is held, which is why the button says so and keeps counting the minutes.
+     * Blocking hands one RileyLink to something else - a laptop running a bench test, a second
+     * phone - and it takes one Bluetooth connection at a time, so nothing else can reach it until
+     * this app lets go. The block is kept per device and stored on the phone, so it survives a
+     * restart and never reaches a RileyLink other than the one named. The pump is not managed
+     * while the RileyLink it uses is blocked.
      */
-    private fun onReleaseClicked() {
+    private fun onBlockClicked() {
+        if (medtronicPumpPlugin.rileyLinkService == null) {
+            emitNotConfiguredDialog()
+            return
+        }
+        _blockPicker.value = blockableDevices()
+    }
+
+    /**
+     * The RileyLinks the picker offers.
+     *
+     * The one this app is set up to use, plus every address already blocked. A blocked address has
+     * to stay on the list even after the configured RileyLink changes, or there would be no way
+     * left to unblock it.
+     */
+    private fun blockableDevices(): List<BlockableRileyLink> {
+        val blockList = rileyLinkServiceData.blockList
+        val blocked = blockList.blocked()
+        val configured = blockList.configuredAddress()
+        val addresses = LinkedHashSet<String>()
+        configured?.let { addresses.add(it) }
+        addresses.addAll(blocked)
+        return addresses.map { address ->
+            BlockableRileyLink(
+                address = address,
+                name = nameFor(address, configured),
+                isBlocked = blocked.contains(address),
+                isInUse = address == configured
+            )
+        }
+    }
+
+    /**
+     * A name for a row in the picker.
+     *
+     * Only the configured RileyLink has a stored name, so a previously blocked one falls back to
+     * its address. Showing the address twice is better than showing another device's name.
+     */
+    private fun nameFor(address: String, configured: String?): String {
+        if (address != configured) return address
+        return rileyLinkServiceData.blockList.configuredName() ?: address
+    }
+
+    /** Blocks the chosen RileyLink, or unblocks it when it is already blocked. */
+    fun toggleBlock(address: String) {
         val service = medtronicPumpPlugin.rileyLinkService
         if (service == null) {
             emitNotConfiguredDialog()
             return
         }
-        // releaseRileyLink and resumeRileyLink both change the service state, which is already
-        // one of the things uiState is built from, so the label updates without asking.
-        if (rileyLinkServiceData.release.isHeld) {
-            service.resumeRileyLink()
-            _events.tryEmit(MedtronicOverviewEvent.ShowSnackbar(rh.gs(RileyLinkR.string.rileylink_release_resumed)))
+        val devices = _blockPicker.value ?: return
+        val device = devices.firstOrNull { it.address == address } ?: return
+        if (device.isBlocked) {
+            service.unblockRileyLink(address)
+            _events.tryEmit(MedtronicOverviewEvent.ShowSnackbar(rh.gs(RileyLinkR.string.rileylink_unblocked_message, device.name)))
         } else {
-            service.releaseRileyLink()
-            _events.tryEmit(MedtronicOverviewEvent.ShowSnackbar(rh.gs(RileyLinkR.string.rileylink_released)))
+            service.blockRileyLink(address)
+            _events.tryEmit(MedtronicOverviewEvent.ShowSnackbar(rh.gs(RileyLinkR.string.rileylink_blocked_message, device.name)))
         }
+        // Rebuilt from the stored list rather than flipped in place, so what the picker shows is
+        // what was actually written.
+        _blockPicker.value = blockableDevices()
+        // Blocking the RileyLink in use changes the service state, and the overview is rebuilt on
+        // that event. Blocking any other one changes nothing the overview listens to, so the
+        // button that counts the blocked devices is redrawn here instead.
+        medtronicRefresh.value = System.currentTimeMillis()
+    }
+
+    /** Closes the picker. The blocks it set stay as they are. */
+    fun dismissBlockPicker() {
+        _blockPicker.value = null
     }
 
     private fun onRefreshClicked() {

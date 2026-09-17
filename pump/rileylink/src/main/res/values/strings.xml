@@ -152,8 +152,15 @@ Only continue if the pump is off the body.</string>
     <string name="rileylink_diag_test_armed_hint">The next matching operation will fail on purpose. Clears itself after two minutes.</string>
     <string name="rileylink_diag_test_disarm">Cancel test</string>
 
-    <string name="rileylink_release">Release RileyLink</string>
-    <string name="rileylink_release_resume" comment="%1$d = whole minutes the RileyLink has been released so far. Example: Take RileyLink back (held 8 min)">Take RileyLink back (held %1$d min)</string>
-    <string name="rileylink_released">RileyLink released. It stays released until you take it back, and the pump is not managed until then.</string>
-    <string name="rileylink_release_resumed">RileyLink taken back. The app will connect to it again.</string>
+    <string name="rileylink_block_button">Block a RileyLink</string>
+    <string name="rileylink_block_button_active" comment="%1$d = how many RileyLinks are blocked. Example: Blocked RileyLinks (1)">Blocked RileyLinks (%1$d)</string>
+    <string name="rileylink_block_title">Block a RileyLink</string>
+    <string name="rileylink_block_message">A blocked RileyLink is left alone by this app, so a laptop or another phone can use it. The block is kept until you remove it here, even after the app restarts. The pump is not managed while the RileyLink it uses is blocked.</string>
+    <string name="rileylink_block_action">Block</string>
+    <string name="rileylink_block_unblock_action">Unblock</string>
+    <string name="rileylink_block_in_use">In use</string>
+    <string name="rileylink_block_blocked">Blocked</string>
+    <string name="rileylink_block_none">No RileyLink is set up yet, so there is nothing to block.</string>
+    <string name="rileylink_blocked_message" comment="%1$s = the RileyLink name or MAC address. Example: EmaLink blocked. This app will not connect to it until you unblock it.">%1$s blocked. This app will not connect to it until you unblock it.</string>
+    <string name="rileylink_unblocked_message" comment="%1$s = the RileyLink name or MAC address. Example: EmaLink unblocked.">%1$s unblocked.</string>
 </resources>

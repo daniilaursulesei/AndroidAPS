@@ -19,4 +19,14 @@ enum class RileyLinkStringKey(
      * reused for a different RileyLink.
      */
     FirmwareVersionCache("pref_rileylink_firmware_version_cache", ""),
+
+    /**
+     * RileyLinks this app must never connect to, as MAC addresses separated by commas.
+     *
+     * Blocking hands a RileyLink to something else - a laptop running a bench test, a second
+     * phone - and it has to survive a restart. A block kept only in memory is silently lost the
+     * next time Android rebuilds the service, and the app reconnects with nothing in the log to
+     * say a block was ever set. That is why this is a stored preference and not a field.
+     */
+    BlockedDevices("pref_rileylink_blocked_devices", ""),
 }
