@@ -226,6 +226,32 @@ class RileyLinkBLE(
         }
     }
 
+    /**
+     * Lets go of the device completely, so that nothing brings the link back.
+     *
+     * A plain disconnect is not enough. The client is created with autoConnect set, which means
+     * the Android Bluetooth stack re-establishes the link by itself, with no call from this app,
+     * as soon as the device is in range. Closing the client is what cancels that, and it has to
+     * happen whether or not this app currently believes it is connected: `isConnected` is false
+     * for a link that has dropped, and it is exactly that case where the stack is waiting to
+     * reconnect.
+     */
+    @SuppressLint("MissingPermission")
+    fun releaseLink() {
+        isConnected = false
+        // Not a manual disconnect in the bookkeeping sense: the client is closed here and now,
+        // so there is no callback left to do it, and leaving the flag set would make the next
+        // genuine drop look like one this app asked for.
+        manualDisconnect = false
+        aapsLogger.warn(LTag.PUMPBTCOMM, "Releasing the RileyLink: closing the Bluetooth client so it cannot reconnect by itself")
+        try {
+            bluetoothConnectionGatt?.disconnect()
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.PUMPBTCOMM, "disconnect while releasing: ${e.javaClass.simpleName}: ${e.message}")
+        }
+        close()
+    }
+
     @SuppressLint("MissingPermission")
     fun close() {
         bluetoothConnectionGatt?.close()

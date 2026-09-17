@@ -440,7 +440,14 @@ class MedtronicPumpPlugin(
      * Stops the refresh loop from trying, so the release is quiet in the log instead of a run
      * of failures, and so nothing queues a tune up over it.
      */
-    override fun isInPreventConnectMode(): Boolean = rileyLinkServiceData.isReleased
+    override fun isInPreventConnectMode(): Boolean {
+        val held = rileyLinkServiceData.isReleased
+        // This runs on the driver's own minute tick, which is the only regular beat available.
+        // Closing the Bluetooth client is what stops Android reconnecting on its own, so once the
+        // hold is over something has to open the link again, and this is it.
+        if (!held) rileyLinkMedtronicService?.reopenAfterRelease()
+        return held
+    }
 
     private val isPumpNotReachable: Boolean
         get() {

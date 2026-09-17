@@ -169,17 +169,41 @@ abstract class RileyLinkService : Service() {
         rileyLinkServiceData.release.hold(now, minutes)
         val held = rileyLinkServiceData.release.minutesLeft(now)
         aapsLogger.info(LTag.PUMPBTCOMM, "RileyLink released for $held minute(s). The app will not connect to it until then.")
-        if (rileyLinkBLE.isConnected) rileyLinkBLE.disconnect()
+        // Unconditionally, not only when this app thinks it is connected. The Bluetooth client is
+        // created with autoConnect, so the Android stack re-establishes the link on its own, and
+        // isConnected is false in exactly the case where it is waiting to do so.
+        rileyLinkBLE.releaseLink()
         rileyLinkServiceData.setServiceState(RileyLinkServiceState.BluetoothReady)
         return held
     }
 
-    /** Ends a release early and lets the driver connect again. */
+    /** Ends a release early and opens the link again. */
     fun resumeRileyLink() {
         rileyLinkServiceData.release.release()
-        aapsLogger.info(LTag.PUMPBTCOMM, "RileyLink release ended. The app may connect again.")
-        // Re-announce the state so the screen redraws now rather than on its next tick.
-        rileyLinkServiceData.setServiceState(RileyLinkServiceState.BluetoothReady)
+        aapsLogger.info(LTag.PUMPBTCOMM, "RileyLink release ended by hand.")
+        reopenAfterRelease()
+    }
+
+    /**
+     * Opens the link again once a hold is over.
+     *
+     * Closing the Bluetooth client is what stops the stack reconnecting, so nothing brings the
+     * link back by itself and this has to. Safe to call on a timer: it does nothing unless a
+     * hold closed the link and that hold has ended.
+     */
+    fun reopenAfterRelease() {
+        val release = rileyLinkServiceData.release
+        if (!release.shouldReconnect(System.currentTimeMillis())) return
+        release.reconnected()
+        val address = rileyLinkServiceData.rileyLinkAddress
+        if (address == null) {
+            aapsLogger.error(LTag.PUMPBTCOMM, "Release is over but no RileyLink address is stored, cannot reconnect")
+            rileyLinkServiceData.setServiceState(RileyLinkServiceState.BluetoothReady)
+            return
+        }
+        aapsLogger.info(LTag.PUMPBTCOMM, "Release is over, connecting to $address again")
+        rileyLinkServiceData.setServiceState(RileyLinkServiceState.RileyLinkInitializing)
+        rileyLinkBLE.findRileyLink(address)
     }
 
     fun disconnectRileyLink() {

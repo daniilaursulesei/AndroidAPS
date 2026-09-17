@@ -71,6 +71,66 @@ class RileyLinkReleaseTest {
         assertEquals(1, release.minutesLeft(t0))
     }
 
+    // The Bluetooth client is created with autoConnect, so Android re-opens the link on its own.
+    // Closing the client is the only way to stop that, and then nothing re-opens it either, so the
+    // window has to remember that a reconnect is owed.
+
+    @Test
+    fun `nothing is owed before anything was released`() {
+        assertFalse(RileyLinkRelease().shouldReconnect(t0))
+    }
+
+    @Test
+    fun `no reconnect while the hold is running`() {
+        val release = RileyLinkRelease()
+        release.hold(t0, 10)
+        assertTrue(release.needsReconnect)
+        assertFalse(release.shouldReconnect(t0 + 5 * minute))
+    }
+
+    @Test
+    fun `a reconnect is owed once the hold ends`() {
+        val release = RileyLinkRelease()
+        release.hold(t0, 10)
+        assertTrue(release.shouldReconnect(t0 + 10 * minute))
+    }
+
+    @Test
+    fun `a phone that slept past the end still reconnects on its next tick`() {
+        val release = RileyLinkRelease()
+        release.hold(t0, 10)
+        assertTrue(release.shouldReconnect(t0 + 3 * 60 * minute))
+    }
+
+    @Test
+    fun `the reconnect is owed once, not on every tick`() {
+        val release = RileyLinkRelease()
+        release.hold(t0, 10)
+        assertTrue(release.shouldReconnect(t0 + 10 * minute))
+        release.reconnected()
+        assertFalse(release.shouldReconnect(t0 + 11 * minute))
+        assertFalse(release.shouldReconnect(t0 + 60 * minute))
+    }
+
+    @Test
+    fun `taking it back by hand owes the reconnect straight away`() {
+        val release = RileyLinkRelease()
+        release.hold(t0, 10)
+        release.release()
+        assertTrue(release.shouldReconnect(t0))
+    }
+
+    @Test
+    fun `releasing twice still owes exactly one reconnect, after the second window`() {
+        val release = RileyLinkRelease()
+        release.hold(t0, 10)
+        release.hold(t0 + minute, 10)
+        assertFalse(release.shouldReconnect(t0 + 5 * minute))
+        assertTrue(release.shouldReconnect(t0 + 11 * minute))
+        release.reconnected()
+        assertFalse(release.shouldReconnect(t0 + 12 * minute))
+    }
+
     @Test
     fun `it can be ended early`() {
         val release = RileyLinkRelease()
