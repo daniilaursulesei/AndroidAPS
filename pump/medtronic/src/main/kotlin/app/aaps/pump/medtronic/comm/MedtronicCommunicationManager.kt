@@ -135,7 +135,8 @@ class MedtronicCommunicationManager(
         if (!canPreventTuneUp) {
             val diff = System.currentTimeMillis() - medtronicPumpStatus.lastConnection
             if (diff > RILEYLINK_TIMEOUT) {
-                serviceTaskExecutor.startTask(wakeAndTuneTaskProvider())
+                // Once, not once per failed wake up. See ServiceTaskExecutor.startTaskOnce.
+                serviceTaskExecutor.startTaskOnce(wakeAndTuneTaskProvider())
             }
         }
         return false

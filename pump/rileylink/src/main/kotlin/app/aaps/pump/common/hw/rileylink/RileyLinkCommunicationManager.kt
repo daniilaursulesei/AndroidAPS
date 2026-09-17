@@ -102,7 +102,9 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
                     if (diff > ALLOWED_PUMP_UNREACHABLE) {
                         aapsLogger.warn(LTag.PUMPBTCOMM, "We reached max time that Pump can be unreachable. Starting Tuning.")
                         rfspy.readRadioStats("pumpUnreachable")
-                        serviceTaskExecutor.startTask(wakeAndTuneTaskProvider())
+                        // Once, not once per timeout. Every timeout while the pump is away used
+                        // to queue its own run, and they were served one after the other.
+                        serviceTaskExecutor.startTaskOnce(wakeAndTuneTaskProvider())
                         timeoutCount = 0
                     }
                 }
