@@ -8,12 +8,14 @@ import app.aaps.pump.common.hw.rileylink.RileyLinkUtil
 import app.aaps.pump.common.hw.rileylink.ble.RFSpy
 import app.aaps.pump.common.hw.rileylink.ble.RileyLinkBLE
 import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkFirmwareVersionBase
+import app.aaps.pump.common.hw.rileylink.ble.data.RadioStats
 import app.aaps.pump.common.hw.rileylink.ble.defs.usesV2Protocol
 import app.aaps.pump.common.hw.rileylink.service.FirmwareVersionStore
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Works out what is wrong with the RileyLink, and can try to put it right.
@@ -57,6 +59,7 @@ class RileyLinkSelfTest(
         val linkOk = checkBluetoothLink(adapterOk).also { checks += it }.outcome == CheckOutcome.OK
         val ble113Ok = checkBle113(linkOk).also { checks += it }.outcome == CheckOutcome.OK
         val radioCheck = checkRadio(ble113Ok).also { checks += it }
+        checks += checkConcurrency(radioCheck.outcome == CheckOutcome.OK)
         checks += checkWireFormat()
         checks += checkRecentHistory()
 
@@ -219,6 +222,69 @@ class RileyLinkSelfTest(
         }
     }
 
+    /**
+     * Fires two radio commands at the same moment, on purpose, to prove the radio lock holds.
+     *
+     * Measured on a bench pump with a laptop driving a RileyLink directly and no lock in the way:
+     * two commands sent at the same moment lose one of them, five times out of five, at both the
+     * worst and the best signal recorded. The radio RECEIVES the missing reply - its own
+     * received-packet counter steps up for it - and the caller never sees it, because the
+     * RileyLink has one command buffer and the second write displaces the first. From the outside
+     * that is indistinguishable from bits sliding, and it is what the lock in
+     * `RFSpy.writeToDataRaw` exists to stop.
+     *
+     * This check cannot show the failure, because the lock is in the way. A switch to bypass that
+     * lock in an app that drives an insulin pump is not worth having, so there is none. What it can
+     * show is that the lock did its job: one caller waited its turn, both callers got their own
+     * answer, and nothing was dropped.
+     *
+     * Two commands the RileyLink answers by itself are used - GetVersion and GetStatistics - so
+     * nothing is transmitted to the pump and the check works with no pump in range.
+     */
+    private fun checkConcurrency(radioOk: Boolean): DiagnosisCheck {
+        if (!radioOk) return DiagnosisCheck(CHECK_CONCURRENCY, CheckOutcome.SKIPPED, "Not checked, the radio chip is not answering.")
+        if (!rileyLinkServiceData.firmwareVersion.usesV2Protocol()) {
+            return DiagnosisCheck(
+                CHECK_CONCURRENCY, CheckOutcome.SKIPPED,
+                "Not checked, this firmware has no statistics command to race against."
+            )
+        }
+
+        // Quiet first. Contention from the app's own traffic would push the wait counter up for a
+        // reason that has nothing to do with this check, and it would then pass without having
+        // proved anything.
+        waitForQuietRadio()
+        if (rfSpy.radioBusy) {
+            return DiagnosisCheck(
+                CHECK_CONCURRENCY, CheckOutcome.SKIPPED,
+                "Not checked, the app is talking to the pump right now.",
+                listOf("This check needs the radio to itself, so that the only two commands racing are its own.")
+            )
+        }
+
+        val before = diag.snapshot.value
+        val stats = AtomicReference<RadioStats?>()
+        val other = Thread({ stats.set(rfSpy.readRadioStats("concurrency check")) }, CONCURRENCY_THREAD)
+        other.start()
+        val versionRaw = rfSpy.probeRadio()
+        other.join(CONCURRENCY_JOIN_MS)
+        val after = diag.snapshot.value
+
+        val versionText = versionRaw?.let { String(it.map { b -> (b.toInt() and 0xFF).toChar() }.toCharArray()) } ?: ""
+        val versionOk = versionText.contains(SUBG_RFSPY)
+        val statsOk = stats.get() != null
+        val waited = after.radioTurnsWaited - before.radioTurnsWaited
+        val missed = after.radioTurnsMissed - before.radioTurnsMissed
+
+        val detail = listOf(
+            "GetVersion answered: ${if (versionOk) "yes, with a version string" else "no"}",
+            "GetStatistics answered: ${if (statsOk) "yes, counters read" else "no"}",
+            "Commands that had to wait their turn: $waited",
+            "Commands dropped because the radio never came free: $missed"
+        )
+        return DiagnosisCheck(CHECK_CONCURRENCY, concurrencyOutcome(versionOk, statsOk, waited, missed), concurrencySummary(versionOk, statsOk, waited, missed), detail)
+    }
+
     /** What the app is currently deciding to send, and why. */
     private fun checkWireFormat(): DiagnosisCheck {
         val version = rileyLinkServiceData.firmwareVersion
@@ -311,6 +377,10 @@ class RileyLinkSelfTest(
         !ble113Ok                                 -> "The RileyLink is connected but not answering at all."
         radio.outcome == CheckOutcome.FAILED      -> "The Bluetooth side is fine, but the radio chip is not answering. The pump cannot be reached until it does."
         radio.outcome == CheckOutcome.WARNING     -> "The radio answered, but not with something the app could read."
+        // Any other failed check. Without this a failure below the radio fell through to
+        // "Everything checked out", which is the one thing a diagnosis must never say while
+        // something in it has failed.
+        checks.any { it.outcome == CheckOutcome.FAILED }  -> "The radio is answering, but a check below it failed. The details say which."
         checks.any { it.outcome == CheckOutcome.WARNING } -> "Working, but something is worth a look."
         else                                      -> "Everything checked out. The RileyLink and the radio are both answering."
     }
@@ -374,11 +444,40 @@ class RileyLinkSelfTest(
         private const val BUS_WAIT_MS = 8000L
         private const val BUS_POLL_MS = 200L
         private const val RECONNECT_SETTLE_MS = 1000L
+        private const val CONCURRENCY_JOIN_MS = 30_000L
+        private const val CONCURRENCY_THREAD = "rl-concurrency-check"
+
+        /**
+         * The verdict on two commands that were fired at the same moment.
+         *
+         * Kept as a function of the four measured numbers, with no radio in it, because the
+         * equivalent judgement written in a bench script got this wrong: it counted only replies
+         * that came back to the WRONG caller, so a run where five commands vanished entirely
+         * printed "nothing crossed" and read as clean. A dropped command is not clean. Both ways
+         * of going wrong are named here, and both fail.
+         */
+        fun concurrencyOutcome(versionOk: Boolean, statsOk: Boolean, waited: Int, missed: Int): CheckOutcome = when {
+            missed > 0            -> CheckOutcome.FAILED
+            !versionOk || !statsOk -> CheckOutcome.FAILED
+            waited < 1            -> CheckOutcome.WARNING
+            else                  -> CheckOutcome.OK
+        }
+
+        /** One line for [concurrencyOutcome], saying what was actually measured. */
+        fun concurrencySummary(versionOk: Boolean, statsOk: Boolean, waited: Int, missed: Int): String = when {
+            missed > 0             -> "$missed command(s) were dropped because the radio never came free."
+            !versionOk && !statsOk -> "Neither command was answered."
+            !versionOk             -> "The version request was not answered while another command was in flight."
+            !statsOk               -> "The statistics request was not answered while another command was in flight."
+            waited < 1             -> "Both commands were answered, but they did not overlap, so nothing was proved."
+            else                   -> "Both commands were answered and one waited its turn. The radio lock is holding."
+        }
 
         private const val CHECK_ADAPTER = "Phone Bluetooth"
         private const val CHECK_LINK = "Link to the RileyLink"
         private const val CHECK_BLE113 = "Bluetooth chip (BLE113)"
         private const val CHECK_RADIO = "Radio chip (CC1110)"
+        private const val CHECK_CONCURRENCY = "Two commands at once"
         private const val CHECK_FORMAT = "Command format"
         private const val CHECK_HISTORY = "Since the app started"
     }
