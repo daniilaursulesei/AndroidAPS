@@ -99,6 +99,28 @@ class RadioStatsTest {
     }
 
     @Test
+    fun `reads a reply captured from a real RileyLink`() {
+        // subg_rfspy 2.2.21 on an EmaLink, read straight off the radio data characteristic.
+        val captured = byteArrayOf(
+            0xDD.toByte(), 0x00, 0x1B, 0x42, 0x3E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1C,
+            0x25, 0x8B.toByte(), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        )
+        val stats = RadioStats.parse(captured)
+        assertEquals(1_786_430L, stats?.uptimeMs)
+        assertEquals(0, stats?.rxOverflow)
+        assertEquals(0, stats?.rxFifoOverflow)
+        assertEquals(28, stats?.packetsReceived)
+        assertEquals(9611, stats?.packetsSent)
+    }
+
+    @Test
+    fun `a reply cut at its first zero byte is refused rather than read as a short one`() {
+        // What the reader used to hand over: the radio data characteristic is padded with zeros,
+        // and cutting at the first zero leaves a single status byte.
+        assertNull(RadioStats.parse(byteArrayOf(0xDD.toByte())))
+    }
+
+    @Test
     fun `a reply of the right length but not a success is refused`() {
         assertNull(RadioStats.parse(firmwareReply(uptimeMs = 1, sent = 7, status = 0xAA)))
     }

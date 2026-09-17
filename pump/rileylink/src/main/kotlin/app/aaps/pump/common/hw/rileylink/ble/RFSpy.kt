@@ -14,7 +14,6 @@ import app.aaps.pump.common.hw.rileylink.RileyLinkUtil
 import app.aaps.pump.common.hw.rileylink.ble.command.ResetRadio
 import app.aaps.pump.common.hw.rileylink.ble.command.RileyLinkCommand
 import app.aaps.pump.common.hw.rileylink.ble.command.GetStatistics
-import app.aaps.pump.common.hw.rileylink.ble.command.ReadRegister
 import app.aaps.pump.common.hw.rileylink.ble.command.SendAndListen
 import app.aaps.pump.common.hw.rileylink.ble.command.SetHardwareEncoding
 import app.aaps.pump.common.hw.rileylink.ble.command.SetPreamble
@@ -428,10 +427,8 @@ class RFSpy(
 
         this.currentFrequencyMHz = freqMHz
 
-        // Three writes were acknowledged. Read them back so the log says what the radio holds and
-        // not what the app asked for. Costs three short commands; a frequency that quietly did not
-        // take looks exactly like a pump that is not there.
-        diag.frequencySet(freqMHz, readBaseFrequency())
+        // Reading the frequency back would be worth doing, but it cannot be done. See the note on
+        // RileyLinkCommandType.ReadRegister: the command hangs the radio chip.
 
         configureRadioForRegion(rileyLinkServiceData.rileyLinkTargetFrequency)
     }
@@ -573,39 +570,12 @@ class RFSpy(
         // Version 1 radios have no statistics command and would answer "unknown command", so
         // asking them would fill the log with a failure that is not one.
         if (!rileyLinkServiceData.firmwareVersion.usesV2Protocol()) return null
-        val response = writeToData(GetStatistics(), EXPECTED_MAX_BLUETOOTH_LATENCY_MS)
+        // The reply is binary and mostly zero bytes, and the reader normally cuts a reply at its
+        // first zero. Without this it arrives as a single 0xDD.
+        val response = reader.keepingWholeReply { writeToData(GetStatistics(), EXPECTED_MAX_BLUETOOTH_LATENCY_MS) }
         val stats = RadioStats.parse(response?.raw)
         diag.radioStats(reason, stats, response?.raw)
         return stats
-    }
-
-    /**
-     * Reads the three frequency registers back and returns the frequency they hold.
-     *
-     * A register write is acknowledged by the chip that received the command, not by the register,
-     * so an acknowledged write is not proof the value took. This turns the frequency the app
-     * believes it set into one it has read.
-     *
-     * Version 1 radios have no read register command, so this does nothing on them.
-     *
-     * @return the frequency the registers actually hold, or null if it could not be read.
-     */
-    fun readBaseFrequency(): Double? {
-        if (!rileyLinkServiceData.firmwareVersion.usesV2Protocol()) return null
-        val f2 = readRegister(CC111XRegister.freq2) ?: return null
-        val f1 = readRegister(CC111XRegister.freq1) ?: return null
-        val f0 = readRegister(CC111XRegister.freq0) ?: return null
-        val value = (f2 shl 16) or (f1 shl 8) or f0
-        return value * (RILEYLINK_FREQ_XTAL.toDouble() / 2.0.pow(16.0)) / 1000000.0
-    }
-
-    /** One register, or null when the radio did not answer with a value. */
-    private fun readRegister(register: CC111XRegister): Int? {
-        val response = writeToData(ReadRegister(register), EXPECTED_MAX_BLUETOOTH_LATENCY_MS)
-        val raw = response?.raw ?: return null
-        // Status byte then the value. Anything shorter is an error reply, not a reading.
-        if (raw.size < 2 || (raw[0].toInt() and 0xff) != 0xDD) return null
-        return raw[1].toInt() and 0xff
     }
 
     /**

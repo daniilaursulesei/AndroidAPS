@@ -12,9 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.math.abs
 
 /** Where the firmware version in use came from. */
 enum class VersionSource {
@@ -102,8 +100,6 @@ data class RileyLinkDiagSnapshot(
     val radioStats: RadioStats? = null,
     /** Times the radio chip restarted on its own, seen as its uptime going backwards. */
     val radioResets: Int = 0,
-    /** Times a frequency was written and read back as something else. */
-    val frequencyMismatches: Int = 0,
     /** Most recent markers, newest first. Capped at [RileyLinkDiag.EVENT_HISTORY]. */
     val events: List<RileyLinkDiagEvent> = emptyList()
 )
@@ -402,29 +398,6 @@ class RileyLinkDiag(
         else record(DiagSeverity.INFO, "RADIO_STATS", line)
     }
 
-    /**
-     * A frequency was written, and what the registers held afterwards.
-     *
-     * @param askedMHz what the app wrote.
-     * @param readBackMHz what reading the registers gave, or null when they could not be read.
-     */
-    @Synchronized
-    fun frequencySet(askedMHz: Double, readBackMHz: Double?) {
-        // The registers hold a 24 bit step of about 366 Hz, so the value read back is never
-        // exactly the value asked for. Anything inside one step is the same setting.
-        val matches = readBackMHz != null && abs(readBackMHz - askedMHz) < FREQUENCY_STEP_MHZ
-        if (readBackMHz != null && !matches) {
-            _snapshot.update { it.copy(frequencyMismatches = it.frequencyMismatches + 1) }
-        }
-        val line = arrayOf<Pair<String, Any?>>(
-            "askedMHz" to String.format(Locale.ENGLISH, "%.3f", askedMHz),
-            "readBackMHz" to (readBackMHz?.let { String.format(Locale.ENGLISH, "%.3f", it) } ?: "-"),
-            "match" to if (readBackMHz == null) "UNREADABLE" else matches
-        )
-        if (readBackMHz != null && !matches) record(DiagSeverity.WARN, "FREQ_SET", line)
-        else record(DiagSeverity.INFO, "FREQ_SET", line)
-    }
-
     // endregion
 
     // region link
@@ -491,12 +464,5 @@ class RileyLinkDiag(
          */
         const val EVENT_HISTORY = 40
 
-        /**
-         * One step of the frequency registers, in MHz.
-         *
-         * The three registers hold a 24 bit number scaled by the 24 MHz crystal over 2^16, which
-         * is about 366 Hz per step, so a frequency read back is never exactly the one written.
-         */
-        const val FREQUENCY_STEP_MHZ = 0.001
     }
 }

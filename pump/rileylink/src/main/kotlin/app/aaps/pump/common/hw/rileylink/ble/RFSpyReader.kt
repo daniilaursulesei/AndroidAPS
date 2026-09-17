@@ -26,6 +26,15 @@ class RFSpyReader internal constructor(private val aapsLogger: AAPSLogger, priva
     private var releaseCount = 0
     private var stopAtNull = true
 
+    /**
+     * Set while a reply is expected that may contain zero bytes and must arrive whole.
+     *
+     * Volatile because it is written by the thread sending the command and read by the reader
+     * thread. Only one command is on the radio at a time, so the window cannot overlap another
+     * command's reply.
+     */
+    @Volatile private var keepWholeReply = false
+
     /** Replies waiting to be read. Anything above zero when idle means a reply lost its owner. */
     val queuedResponses: Int get() = mDataQueue.size
 
@@ -39,6 +48,22 @@ class RFSpyReader internal constructor(private val aapsLogger: AAPSLogger, priva
     fun setRileyLinkEncodingType(encodingType: RileyLinkEncodingType) {
         aapsLogger.debug("setRileyLinkEncodingType: $encodingType")
         stopAtNull = !(encodingType == RileyLinkEncodingType.Manchester || encodingType == RileyLinkEncodingType.FourByteSixByteRileyLink)
+    }
+
+    /**
+     * Runs [block] with the reply cut at the first zero byte turned off.
+     *
+     * The cut exists because the radio data characteristic is padded with zeros, so for text and
+     * for encoded packets the first zero is the end. A binary reply of fixed length is different:
+     * its zeros are data. Reading the radio's counters without this gives a single 0xDD.
+     */
+    fun <T> keepingWholeReply(block: () -> T): T {
+        keepWholeReply = true
+        try {
+            return block()
+        } finally {
+            keepWholeReply = false
+        }
     }
 
     // This timeout must be coordinated with the length of the RFSpy radio operation or Bad Things Happen.
@@ -81,7 +106,7 @@ class RFSpyReader internal constructor(private val aapsLogger: AAPSLogger, priva
                     var result = rileyLinkBle.readCharacteristicBlocking(serviceUUID, radioDataUUID)
                     SystemClock.sleep(1)
                     if (result.resultCode == BLECommOperationResult.RESULT_SUCCESS) {
-                        if (stopAtNull) {
+                        if (stopAtNull && !keepWholeReply) {
                             // only data up to the first null is valid
                             result.value?.let { resultValue ->
                                 for (i in resultValue.indices) {
