@@ -70,17 +70,56 @@ class FrequencyTrialTest {
     }
 
     @Test
-    fun `a slightly weaker frequency that never missed still wins`() {
+    fun `how much signal strength one miss is worth, over three tries`() {
+        // A miss is not a veto, it is a price, and this is the price. Over three tries a miss
+        // replaces one reading with -99, so it pulls the average down by (99 - |rssi|) / 3. At
+        // -60 dBm that is 13 dB: a frequency that answered two tries out of three at -60 scores
+        // the same as one that answered every try at -73.
+        //
+        // That is on purpose. -60 dBm is 24 dB above the weakest reading the radio can report,
+        // and one miss in three at that strength is more likely to be a collision than a link
+        // that will not hold. A miss at -80 is a different matter, and costs less in absolute
+        // terms but far more in proportion to what is left.
+        val missedOneAtMinus60 = FrequencyTrial().apply {
+            rssiList.addAll(listOf(-60, -60, FrequencyTrial.NO_ANSWER_RSSI))
+        }
+        missedOneAtMinus60.calculateAverage()
+
+        assertEquals(-73.0, missedOneAtMinus60.averageRSSI, 0.01)
+    }
+
+    @Test
+    fun `a clean frequency wins while it is within the price of a miss`() {
+        // 13 dB is the price above. A clean frequency 12 dB weaker still wins.
         val strongerButMissed = FrequencyTrial().apply {
             rssiList.addAll(listOf(-60, -60, FrequencyTrial.NO_ANSWER_RSSI))
         }
         val weakerButComplete = FrequencyTrial().apply {
-            rssiList.addAll(listOf(-75, -75, -75))
+            rssiList.addAll(listOf(-72, -72, -72))
         }
         strongerButMissed.calculateAverage()
         weakerButComplete.calculateAverage()
 
-        assertTrue(weakerButComplete.averageRSSI > strongerButMissed.averageRSSI)
+        assertTrue(
+            weakerButComplete.averageRSSI > strongerButMissed.averageRSSI,
+            "a frequency that answered every try must beat one 12 dB stronger that missed one"
+        )
+    }
+
+    @Test
+    fun `and loses once it is weaker than that`() {
+        // The other side of the same line, stated so a change to NO_ANSWER_RSSI cannot move it
+        // without a test saying so. 15 dB is more than the miss is worth.
+        val strongerButMissed = FrequencyTrial().apply {
+            rssiList.addAll(listOf(-60, -60, FrequencyTrial.NO_ANSWER_RSSI))
+        }
+        val muchWeakerButComplete = FrequencyTrial().apply {
+            rssiList.addAll(listOf(-75, -75, -75))
+        }
+        strongerButMissed.calculateAverage()
+        muchWeakerButComplete.calculateAverage()
+
+        assertTrue(strongerButMissed.averageRSSI > muchWeakerButComplete.averageRSSI)
     }
 
     @Test
