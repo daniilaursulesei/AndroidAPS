@@ -184,11 +184,11 @@ class MedtronicOverviewViewModel(
         initialValue = buildDiagnosticsState(rileyLinkDiag.snapshot.value)
     )
 
-    private fun buildDiagnosticsState(snapshot: RileyLinkDiagSnapshot): RileyLinkDiagnosticsUiState =
+    private fun buildDiagnosticsState(snapshot: RileyLinkDiagSnapshot): RileyLinkDiagnosticsUiState {
         // Which pump the radio is really calling, against the one the settings hold. These two
         // can disagree: the pump ID is read into the radio layer once, when the service is built.
         val serialCheck = checkSerial(medtronicPumpStatus.serialNumber, rileyLinkServiceData.pumpIDBytes)
-        RileyLinkDiagnosticsUiState(
+        return RileyLinkDiagnosticsUiState(
             linkUp = snapshot.linkUp,
             ble113Version = snapshot.ble113Version,
             chipState = snapshot.chipState,
@@ -252,6 +252,7 @@ class MedtronicOverviewViewModel(
                 )
             }
         )
+    }
 
     /** The RileyLinks offered by the block picker, or null while it is closed. */
     private val _blockPicker = MutableStateFlow<List<BlockableRileyLink>?>(null)
