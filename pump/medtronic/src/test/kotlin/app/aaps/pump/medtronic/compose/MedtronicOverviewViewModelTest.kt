@@ -49,6 +49,7 @@ import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.Mock
 import org.mockito.MockitoAnnotations
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyVararg
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import app.aaps.core.ui.R as CoreUiR
@@ -98,6 +99,9 @@ internal class MedtronicOverviewViewModelTest {
         // Catch-all so every info-row / action label resolves to a non-null String (PumpInfoRow.label
         // and PumpAction.label are non-null; an unstubbed rh.gs() would return null and NPE at build).
         whenever(rh.gs(anyInt())).thenReturn("txt")
+        // gs(id, vararg args) is a different method, so the catch-all above does not cover it. The
+        // battery row formats its value through it, and an unstubbed call returns null there too.
+        whenever(rh.gs(anyInt(), anyVararg())).thenReturn("txt")
 
         // rx wiring touched at construction: PumpCommunicationStatus init + the three medtronicRefresh
         // collectors launched in viewModelScope (UnconfinedTestDispatcher runs them eagerly).
@@ -117,6 +121,11 @@ internal class MedtronicOverviewViewModelTest {
         whenever(medtronicPumpStatus.activeProfileName).thenReturn("STD")
         whenever(medtronicPumpStatus.lastConnection).thenReturn(0L)      // -> "-" (skips ago formatting)
         whenever(medtronicPumpStatus.batteryType).thenReturn(BatteryType.None)
+        // Mockito answers 0 for a boxed Double or Int, not null, so a pump that has reported no
+        // battery reading yet has to be said out loud. Left to the default, the battery row reads
+        // a flat cell at 0.00 V and every level comes out CRITICAL.
+        whenever(medtronicPumpStatus.batteryVoltage).thenReturn(null as Double?)
+        whenever(medtronicPumpStatus.batteryRemaining).thenReturn(null as Int?)
         whenever(medtronicPumpStatus.errorInfo).thenReturn("-")          // PLACEHOLDER -> NORMAL level
         whenever(medtronicPumpPlugin.baseBasalRate).thenReturn(PumpRate(0.0))
         // medtronicPumpPlugin.rileyLinkService defaults to null -> isConfigured = false
