@@ -13,6 +13,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Created by geoff on 5/26/16.
@@ -37,6 +38,18 @@ class RFSpyReader internal constructor(private val aapsLogger: AAPSLogger, priva
 
     /** Replies waiting to be read. Anything above zero when idle means a reply lost its owner. */
     val queuedResponses: Int get() = mDataQueue.size
+
+    private val repliesEnqueued = AtomicLong(0)
+
+    /**
+     * How many replies this reader has ever put on the queue.
+     *
+     * A command reads this after the drain and again when its write finishes. If the number has
+     * moved, a reply landed while the command was still being written, which means it was asked
+     * for by an earlier command - this one had not reached the radio yet. That is the exact test
+     * for a crossed reply, and it needs no timing.
+     */
+    val repliesSeen: Long get() = repliesEnqueued.get()
 
     /**
      * Notifications that arrived but have not been read out yet.
@@ -66,22 +79,38 @@ class RFSpyReader internal constructor(private val aapsLogger: AAPSLogger, priva
         }
     }
 
-    // This timeout must be coordinated with the length of the RFSpy radio operation or Bad Things Happen.
+    /**
+     * Waits up to [timeoutMs] for one reply, or takes one that is already there.
+     *
+     * A timeout of zero is the drain used before a command goes out: it takes whatever is waiting
+     * and never blocks.
+     *
+     * There used to be a guard here that skipped the read when the queue was NOT empty and a real
+     * timeout had been asked for, and returned null on the spot. It reported "no response" while
+     * the reply sat in the queue, and the next command then took that reply as its own. In one
+     * field log it fired 56 times in 32 seconds and left the radio one command behind for the
+     * whole of it. Measured on the bench, a RileyLink answers a local command in 109 to 188 ms
+     * while the app allows 5000, so a command that reports nothing has almost always been told
+     * nothing by this function rather than by the radio.
+     *
+     * The timeout still has to match the length of the radio operation, or the caller gives up
+     * while the radio is still listening.
+     */
     fun poll(timeoutMs: Int): ByteArray? {
         aapsLogger.debug(LTag.PUMPBTCOMM, "${ThreadUtil.sig()}Entering poll at t==${SystemClock.uptimeMillis()}, timeout is $timeoutMs mDataQueue size is ${mDataQueue.size}")
-        if (mDataQueue.isEmpty() || timeoutMs == 0) { //0 timeout is used for drain queue in RFSpy.writeToDataRaw before sending new command
-            try {
-                // block until timeout or data available.
-                // returns null if timeout.
-                val dataFromQueue = mDataQueue.poll(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
-                if (dataFromQueue != null)
-                    aapsLogger.debug(LTag.PUMPBTCOMM, "Got data [${ByteUtil.shortHexString(dataFromQueue)}] at t==${SystemClock.uptimeMillis()}")
-                else
-                    aapsLogger.debug(LTag.PUMPBTCOMM, "Got data [null] at t==" + SystemClock.uptimeMillis())
-                return dataFromQueue
-            } catch (_: InterruptedException) {
-                aapsLogger.error(LTag.PUMPBTCOMM, "poll: Interrupted waiting for data")
-            }
+        try {
+            // Blocks until the timeout or until there is data, and gives back null on a timeout.
+            // With a zero timeout it returns at once, which is what the drain wants.
+            val dataFromQueue = mDataQueue.poll(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            if (dataFromQueue != null)
+                aapsLogger.debug(LTag.PUMPBTCOMM, "Got data [${ByteUtil.shortHexString(dataFromQueue)}] at t==${SystemClock.uptimeMillis()}")
+            else
+                aapsLogger.debug(LTag.PUMPBTCOMM, "Got data [null] at t==" + SystemClock.uptimeMillis())
+            return dataFromQueue
+        } catch (_: InterruptedException) {
+            aapsLogger.error(LTag.PUMPBTCOMM, "poll: Interrupted waiting for data")
+            // Put the flag back for whoever set it, rather than swallowing the interrupt.
+            Thread.currentThread().interrupt()
         }
         return null
     }
@@ -117,6 +146,9 @@ class RFSpyReader internal constructor(private val aapsLogger: AAPSLogger, priva
                                 }
                             }
                         }
+                        // Counted before it is offered, so a caller that reads the count right
+                        // after its own write can tell that this reply was already here.
+                        repliesEnqueued.incrementAndGet()
                         mDataQueue.add(result.value)
                     } else if (result.resultCode == BLECommOperationResult.RESULT_INTERRUPTED)
                         aapsLogger.error(LTag.PUMPBTCOMM, "Read operation was interrupted")

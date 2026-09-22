@@ -110,6 +110,10 @@
     <string name="rileylink_diag_gatt_busy">busy</string>
     <string name="rileylink_diag_gatt_idle">idle</string>
     <string name="rileylink_diag_reader_queue">Reader queue</string>
+    <string name="rileylink_diag_replies_crossed">Answered with the wrong reply</string>
+    <string name="rileylink_diag_replies_late">Replies that came back too late</string>
+    <string name="rileylink_diag_replies_lost">Replies the radio never sent</string>
+    <string name="rileylink_diag_last_reply_problem" comment="%1$s=the command and what went wrong, for example &quot;GetVersion: CROSSED&quot;">Last problem: %1$s</string>
     <string name="rileylink_diag_pending_permits">Pending notifications</string>
     <string name="rileylink_diag_command_queue">Command queue</string>
     <string name="rileylink_diag_encoding">Encoding</string>

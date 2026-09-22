@@ -64,6 +64,20 @@ data class RileyLinkDiagnosticsUiState(
     val noResponseWaited: String?,
     val gattBusy: Boolean,
     val readerQueue: Int,
+    /**
+     * Commands answered with the reply of the command before them. Must stay at zero.
+     *
+     * Kept next to the reader queue because that is where it comes from, and shown even at zero
+     * so its absence means something. Everything else on this card can look healthy while this
+     * climbs: every command gets an answer, just the wrong one.
+     */
+    val repliesCrossed: Int,
+    /** Replies that arrived after their caller gave up. Not a fault on its own. */
+    val repliesLate: Int,
+    /** Replies the radio never sent, even after waiting on for them. */
+    val repliesLost: Int,
+    /** The last command whose reply went wrong, and how. Null when none has. */
+    val lastReplyProblem: String?,
     val pendingPermits: Int,
     val commandQueue: Int,
     val unexpectedDisconnects: Int,
@@ -390,6 +404,16 @@ fun RileyLinkDiagnosticsCard(
                 stringResource(if (state.gattBusy) R.string.rileylink_diag_gatt_busy else R.string.rileylink_diag_gatt_idle)
             )
             ValueRow(stringResource(R.string.rileylink_diag_reader_queue), state.readerQueue.toString())
+            ValueRow(
+                stringResource(R.string.rileylink_diag_replies_crossed),
+                state.repliesCrossed.toString(),
+                warn = state.repliesCrossed > 0
+            )
+            ValueRow(stringResource(R.string.rileylink_diag_replies_late), state.repliesLate.toString())
+            ValueRow(stringResource(R.string.rileylink_diag_replies_lost), state.repliesLost.toString())
+            state.lastReplyProblem?.let {
+                DetailText(stringResource(R.string.rileylink_diag_last_reply_problem, it))
+            }
             ValueRow(stringResource(R.string.rileylink_diag_pending_permits), state.pendingPermits.toString())
             ValueRow(stringResource(R.string.rileylink_diag_command_queue), state.commandQueue.toString())
             ValueRow(stringResource(R.string.rileylink_diag_protocol), state.protocolFormat)
@@ -469,6 +493,8 @@ private fun buildPlainText(state: RileyLinkDiagnosticsUiState): String = buildSt
     appendLine()
     appendLine("GATT operation: ${if (state.gattBusy) "busy" else "idle"}")
     appendLine("Reader queue: ${state.readerQueue}   Pending notifications: ${state.pendingPermits}   Command queue: ${state.commandQueue}")
+    appendLine("Replies crossed: ${state.repliesCrossed}   late: ${state.repliesLate}   lost: ${state.repliesLost}")
+    state.lastReplyProblem?.let { appendLine("  last reply problem: $it") }
     appendLine("Unexpected disconnects: ${state.unexpectedDisconnects}   GATT timeouts: ${state.gattWriteTimeouts}   Refused while link down: ${state.writesRefused}   Refused while blocked: ${state.writesWhileBlocked}")
     appendLine("Version bit slips: ${state.versionSlips}   Most inits at once: ${state.concurrentInitPeak}")
     appendLine()
@@ -540,7 +566,7 @@ private fun StatusRow(label: String, value: String, dot: Color) {
 }
 
 @Composable
-private fun ValueRow(label: String, value: String) {
+private fun ValueRow(label: String, value: String, warn: Boolean = false) {
     Row(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = label,
@@ -548,7 +574,14 @@ private fun ValueRow(label: String, value: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f)
         )
-        Text(text = value, style = MaterialTheme.typography.bodySmall)
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            // A counter that must stay at zero is worth reading at a glance. Everything else on
+            // this card can look healthy while a crossed reply count climbs.
+            color = if (warn) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+            fontWeight = if (warn) FontWeight.SemiBold else FontWeight.Normal
+        )
     }
 }
 

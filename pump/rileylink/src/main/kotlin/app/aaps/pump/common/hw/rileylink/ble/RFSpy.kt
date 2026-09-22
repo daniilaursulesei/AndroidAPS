@@ -32,7 +32,9 @@ import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkTargetFrequency
 import app.aaps.pump.common.hw.rileylink.ble.defs.usesV2Protocol
 import app.aaps.pump.common.hw.rileylink.diagnostics.FaultInjector
 import app.aaps.pump.common.hw.rileylink.diagnostics.InjectableFault
+import app.aaps.pump.common.hw.rileylink.diagnostics.ReplyLedger
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
+import app.aaps.pump.common.hw.rileylink.diagnostics.replyStep
 import app.aaps.pump.common.hw.rileylink.diagnostics.SendAndListenDecoder
 import app.aaps.pump.common.hw.rileylink.diagnostics.VersionSource
 import app.aaps.pump.common.hw.rileylink.service.FirmwareVersionStore
@@ -69,7 +71,8 @@ class RFSpy(
     // constructor parameter on an abstract class that two drivers extend.
     val diag: RileyLinkDiag,
     private val firmwareVersionStore: FirmwareVersionStore,
-    private val faultInjector: FaultInjector
+    private val faultInjector: FaultInjector,
+    private val ledger: ReplyLedger
 ) {
 
     private val radioServiceUUID: UUID = UUID.fromString(GattAttributes.SERVICE_RADIO)
@@ -324,8 +327,16 @@ class RFSpy(
             // measured here is the radio's, not the queue's.
             diag.tx(opName, bytes, rileyLinkServiceData.firmwareVersion.usesV2Protocol(), describeForRadio(bytes))
             val startedAt = System.currentTimeMillis()
-            val raw = writeToDataRawInner(bytes, responseTimeoutMs, opName)
+            val turn = writeToDataRawInner(bytes, responseTimeoutMs, opName)
+            val raw = turn.raw
             diag.rx(opName, raw, System.currentTimeMillis() - startedAt)
+
+            // Everything about being in step is decided here, in one place, while the radio is
+            // still held. Letting go with a reply still owed is what crossed the stream.
+            if (raw != null) ledger.taken()
+            val settledLate = if (raw == null) settleOwedReply(opName) else false
+            diag.replyStepTaken(opName, replyStep(turn.crossed, raw != null, settledLate),
+                                ledger.owedNow)
             return raw
         } finally {
             transactionsInFlight.decrementAndGet()
@@ -335,7 +346,50 @@ class RFSpy(
         }
     }
 
-    private fun writeToDataRawInner(bytes: ByteArray, responseTimeoutMs: Int, opName: String): ByteArray? {
+    /**
+     * Waits for a reply the radio still owes, after its caller has given up.
+     *
+     * The radio is still held while this runs, so the late reply is taken here and cannot be
+     * handed to the next command. It returns as soon as the debt is paid, so a command that was
+     * never going to be answered costs the full [REPLY_SETTLE_MS] and an ordinary late one costs
+     * only as long as it was late.
+     *
+     * @return true when a late reply turned up
+     */
+    private fun settleOwedReply(opName: String): Boolean {
+        if (ledger.inStep) return false
+        val until = System.currentTimeMillis() + REPLY_SETTLE_MS
+        var found = false
+        while (System.currentTimeMillis() < until) {
+            val late = reader.poll(REPLY_SETTLE_STEP_MS)
+            if (late != null) {
+                found = true
+                ledger.taken()
+                aapsLogger.warn(LTag.PUMPBTCOMM, "$opName: the reply arrived after the wait was over: ${shortHexString(late)}")
+                diag.replySettledLate(opName, late)
+                if (ledger.inStep) return true
+            }
+        }
+        if (!ledger.inStep) {
+            // The reply is gone - the RileyLink holds one at a time, and two landing together
+            // destroy one inside the chip. Carrying the debt forward would make every command
+            // after this one look as though something were still owed.
+            diag.replyNeverCame(opName, ledger.owedNow)
+            ledger.writtenOff()
+        }
+        return found
+    }
+
+    /**
+     * What one turn on the radio produced.
+     *
+     * @param raw the bytes handed to the caller, or null
+     * @param crossed a reply was already on the queue by the time this command's write finished,
+     *   so the bytes above were asked for by an earlier command
+     */
+    private class RadioTurn(val raw: ByteArray?, val crossed: Boolean)
+
+    private fun writeToDataRawInner(bytes: ByteArray, responseTimeoutMs: Int, opName: String): RadioTurn {
         SystemClock.sleep(1)
         // Anything already in the queue belongs to no one. With one command at a time this can
         // only be a reply the radio sent after its caller had given up, so it is worth counting
@@ -347,9 +401,13 @@ class RFSpy(
                 LTag.PUMPBTCOMM, (sig() + "writeToData: draining read queue, found this: "
                     + shortHexString(junkInBuffer))
             )
+            ledger.taken()
             diag.radioJunkDrained(opName, junkInBuffer)
             junkInBuffer = reader.poll(0)
         }
+        // After the drain, so a reply that was already waiting is not counted twice: it has just
+        // been thrown away and is not what this command will be given.
+        val seenBeforeWrite = reader.repliesSeen
 
         // prepend length, and send it.
         val prepended = concat(byteArrayOf((bytes.size).toByte()), bytes)
@@ -362,10 +420,19 @@ class RFSpy(
         )
         if (writeCheck.resultCode != BLECommOperationResult.RESULT_SUCCESS) {
             aapsLogger.error(LTag.PUMPBTCOMM, "BLE Write operation failed, code=" + writeCheck.resultCode)
-            return null // will be a null (invalid) response
+            // Nothing reached the radio, so nothing is owed. Counting this as a command sent
+            // would make every later command look crossed.
+            return RadioTurn(null, false) // will be a null (invalid) response
         }
+        ledger.sent()
 
-        return reader.poll(responseTimeoutMs)
+        // A reply that turned up between the drain above and the end of this write was asked for
+        // by an earlier command: this one only reached the radio when the write finished. The
+        // write takes 62 to 156 ms on the bench and a reply takes at least 109 ms after it, so
+        // the two do not overlap in practice - but the count is what decides, not the timing.
+        val crossed = reader.repliesSeen > seenBeforeWrite
+
+        return RadioTurn(reader.poll(responseTimeoutMs), crossed)
     }
 
     // The caller has to know how long the RFSpy will be busy with what was sent to it.
@@ -655,6 +722,28 @@ class RFSpy(
          * command really did sit behind another, which is what the marker is for.
          */
         private const val RADIO_TURN_REPORT_MS = 5L
+
+        /**
+         * How long the radio is held on after a caller gives up, waiting for the reply it is owed.
+         *
+         * A reply that lands after its caller has gone is taken by the next command, and from
+         * there every reply belongs to the command before it. Holding on until it arrives means
+         * it is thrown away by the command that caused it instead.
+         *
+         * Measured on an EmaLink with CC1110 2.2.19, 120 samples: a local command is answered in
+         * 109 to 188 ms, and the slowest reply seen over both bench runs was 297 ms. The spread
+         * is not jitter - the replies fall in two groups 47 ms apart, which is the BLE113's 50 ms
+         * SPI poll timer, so a reply either catches the current poll or waits for the next one.
+         * This covers the slowest seen plus four more of those poll periods.
+         *
+         * Draining before the next write cannot do this job. The write itself takes 62 to 156 ms
+         * on the same hardware, so a reply that lands during it arrives after the drain and is
+         * read by the command doing the writing.
+         */
+        private const val REPLY_SETTLE_MS = 500L
+
+        /** How often the settle period looks for the late reply. */
+        private const val REPLY_SETTLE_STEP_MS = 25
 
         fun getFirmwareVersion(aapsLogger: AAPSLogger, bleVersion: String, cc1110Version: String?): RileyLinkFirmwareVersionBase {
             if (cc1110Version != null) {

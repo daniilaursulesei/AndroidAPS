@@ -34,6 +34,7 @@ import app.aaps.pump.common.hw.rileylink.defs.RileyLinkError
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkServiceState
 import app.aaps.pump.common.hw.rileylink.diagnostics.FaultInjector
 import app.aaps.pump.common.hw.rileylink.diagnostics.InjectableFault
+import app.aaps.pump.common.hw.rileylink.diagnostics.ReplyLedger
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
 import app.aaps.pump.common.hw.rileylink.keys.RileyLinkStringKey
 import app.aaps.pump.common.hw.rileylink.keys.RileylinkBooleanPreferenceKey
@@ -61,7 +62,8 @@ class RileyLinkBLE(
     private val orangeLink: OrangeLinkImpl,
     private val config: Config,
     private val diag: RileyLinkDiag,
-    private val faultInjector: FaultInjector
+    private val faultInjector: FaultInjector,
+    private val ledger: ReplyLedger
 ) {
 
     private val gattDebugEnabled = true
@@ -88,6 +90,9 @@ class RileyLinkBLE(
             if (field == value) return
             field = value
             rileyLinkServiceData.radioSession.linkChanged()
+            // The replies that were in flight died with the link. Carrying the debt across would
+            // make every command on the new link look as though the radio still owed something.
+            ledger.linkReset()
         }
 
     /** True while a GATT read or write is in flight. For the diagnostics screen. */

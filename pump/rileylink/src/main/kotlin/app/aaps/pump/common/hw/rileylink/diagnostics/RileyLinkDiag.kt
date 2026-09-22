@@ -104,6 +104,33 @@ data class RileyLinkDiagSnapshot(
     val radioTurnsMissed: Int = 0,
     /** Replies found in the queue before a command was sent, so they belong to nothing. */
     val radioJunkDrained: Int = 0,
+    /**
+     * Commands answered with the reply of the command before them. Must stay at zero.
+     *
+     * The one number that says the radio stream is out of step. Everything else on this screen
+     * can look healthy while this climbs, because every command gets an answer - just the wrong
+     * one. In the log that made the CC1110 version read as "-" this would have climbed to 23.
+     */
+    val repliesCrossed: Int = 0,
+    /**
+     * Replies that arrived after their caller gave up, and were caught before the next command.
+     *
+     * Not a fault on its own. The command that asked reports nothing and will be retried, but the
+     * stream stays in step. A number that climbs means the timeouts are set too short for this
+     * RileyLink.
+     */
+    val repliesLate: Int = 0,
+    /**
+     * Replies the RileyLink never sent, even after the settle period.
+     *
+     * The chip holds one reply at a time, so two landing together destroy one. Nothing the app
+     * does can bring it back; the command is simply retried.
+     */
+    val repliesLost: Int = 0,
+    /** The last command whose reply was crossed, late or lost, for the screen. */
+    val lastReplyProblem: String? = null,
+    /** When [lastReplyProblem] happened. */
+    val lastReplyProblemAtMillis: Long? = null,
     /** The radio chip's counters, as last read. Null when they have never been read. */
     val radioStats: RadioStats? = null,
     /** Times the radio chip restarted on its own, seen as its uptime going backwards. */
@@ -389,6 +416,48 @@ class RileyLinkDiag(
             "hex" to ByteUtil.shortHexString(junk),
             "count" to _snapshot.value.radioJunkDrained
         )
+    }
+
+    /**
+     * Records what became of one command's reply.
+     *
+     * Called once per command, while the radio is still held, so the counts cannot race. Only the
+     * three problem cases are written to the log; writing a line for every healthy command would
+     * bury them.
+     */
+    @Synchronized
+    fun replyStepTaken(op: String, step: ReplyStep, owedNow: Int) {
+        if (step == ReplyStep.IN_STEP) return
+        _snapshot.update {
+            it.copy(
+                repliesCrossed = it.repliesCrossed + if (step == ReplyStep.CROSSED) 1 else 0,
+                repliesLate = it.repliesLate + if (step == ReplyStep.LATE_DRAINED) 1 else 0,
+                repliesLost = it.repliesLost + if (step == ReplyStep.LOST) 1 else 0,
+                lastReplyProblem = "$op: ${step.name}",
+                lastReplyProblemAtMillis = System.currentTimeMillis()
+            )
+        }
+        val counts = _snapshot.value
+        markWarn(
+            "REPLY", "op" to op, "step" to step.name, "owed" to owedNow,
+            "crossed" to counts.repliesCrossed, "late" to counts.repliesLate,
+            "lost" to counts.repliesLost
+        )
+    }
+
+    /** A reply the radio owed turned up during the settle period, after its caller had gone. */
+    @Synchronized
+    fun replySettledLate(op: String, late: ByteArray) {
+        markWarn(
+            "REPLY_LATE", "op" to op, "len" to late.size,
+            "hex" to ByteUtil.shortHexString(late)
+        )
+    }
+
+    /** The settle period ended and the reply never came. */
+    @Synchronized
+    fun replyNeverCame(op: String, owedNow: Int) {
+        markWarn("REPLY_LOST", "op" to op, "owed" to owedNow)
     }
 
     // endregion

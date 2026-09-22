@@ -332,17 +332,32 @@ class RileyLinkSelfTest(
             "Commands that waited for the radio: ${s.radioTurnsWaited} (longest ${s.radioLongestWaitMs} ms)",
             "Commands dropped because the radio stayed busy: ${s.radioTurnsMissed}",
             "Replies found in the queue with no command waiting: ${s.radioJunkDrained}",
+            "Commands answered with the reply of the one before: ${s.repliesCrossed}",
+            "Replies that came back too late to be used: ${s.repliesLate}",
+            "Replies the radio never sent: ${s.repliesLost}",
+            s.lastReplyProblem?.let { "Last reply problem: $it" } ?: "No reply problem this session",
             "Radio chip restarts: ${s.radioResets}",
             s.radioStats?.let {
                 "Radio counters: ${it.packetsSent} packets sent, ${it.packetsReceived} received"
             } ?: "Radio counters: not read yet"
         )
+        // A crossed reply is in a class of its own. Every other counter here says something did
+        // not happen; this one says something happened WRONG, and the app cannot tell from the
+        // bytes alone. It is what made a version read come back as a wake up's reply and the
+        // CC1110 show as "-", with every other number on this screen looking healthy.
+        val crossed = s.repliesCrossed > 0
         val bad = s.versionSlipsSeen > 0 || s.concurrentInitPeak > 1 || s.gattWriteTimeouts > 0 ||
             s.radioTurnsMissed > 0 || s.radioResets > 0
         return DiagnosisCheck(
             CHECK_HISTORY,
-            if (bad) CheckOutcome.WARNING else CheckOutcome.OK,
-            if (bad) "Something went wrong earlier in this session." else "Nothing unusual since the app started.",
+            if (crossed) CheckOutcome.FAILED else if (bad) CheckOutcome.WARNING else CheckOutcome.OK,
+            when {
+                crossed -> "Commands were answered with the wrong reply ${s.repliesCrossed} times. " +
+                    "Anything the app read during that time may be another command's answer."
+
+                bad     -> "Something went wrong earlier in this session."
+                else    -> "Nothing unusual since the app started."
+            },
             detail
         )
     }
