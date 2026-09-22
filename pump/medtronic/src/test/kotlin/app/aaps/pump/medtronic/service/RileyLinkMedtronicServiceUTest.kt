@@ -7,6 +7,7 @@ import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkTargetFrequency
 import app.aaps.pump.common.hw.rileylink.keys.RileyLinkStringKey
 import app.aaps.pump.common.hw.rileylink.keys.RileyLinkStringPreferenceKey
 import app.aaps.pump.common.hw.rileylink.keys.RileylinkBooleanPreferenceKey
+import app.aaps.pump.common.hw.rileylink.service.RadioSession
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkBlockList
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
 import app.aaps.pump.medtronic.MedtronicPumpPlugin
@@ -48,7 +49,7 @@ class RileyLinkMedtronicServiceUTest : TestBaseWithProfile() {
     fun setup() {
         // Create real instances for objects we need to inspect
         medtronicPumpStatus = MedtronicPumpStatus(preferences, rxBus, rileyLinkUtil)
-        rileyLinkServiceData = RileyLinkServiceData(aapsLogger, rileyLinkUtil, rxBus, RileyLinkBlockList(preferences))
+        rileyLinkServiceData = RileyLinkServiceData(aapsLogger, rileyLinkUtil, rxBus, RileyLinkBlockList(preferences), RadioSession())
 
         // Create service instance
         service = RileyLinkMedtronicService().also {

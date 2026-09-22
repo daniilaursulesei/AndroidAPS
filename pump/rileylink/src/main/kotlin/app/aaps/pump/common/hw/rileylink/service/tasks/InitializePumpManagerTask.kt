@@ -31,6 +31,14 @@ class InitializePumpManagerTask(
     override fun run() {
         if (!isRileyLinkDevice) return
 
+        // The link this run is about. A task can outlive its link: a GATT write that dies with
+        // the link takes 22 seconds to time out, and by then the RileyLink can be connected
+        // again. What this task then finds out is about a link that is gone, so it must not be
+        // published. Saying "no contact with the pump" and asking for a tune up on a link that
+        // was already replaced is how a tune up ends up running beside the start up sequence of
+        // the new link, and those two share one reply queue.
+        val startedOnLink = rileyLinkServiceData.radioSession.generation
+
         var lastGoodFrequency: Double
         if (rileyLinkServiceData.lastGoodFrequency == null) {
             lastGoodFrequency = preferences.get(RileyLinkDoubleKey.LastGoodDeviceFrequency)
@@ -45,11 +53,13 @@ class InitializePumpManagerTask(
                 aapsLogger.info(LTag.PUMPBTCOMM, "Setting radio frequency to $lastGoodFrequency MHz")
                 rileyLinkCommunicationManager.setRadioFrequencyForPump(lastGoodFrequency)
                 if (rileyLinkCommunicationManager.tryToConnectToDevice()) rileyLinkServiceData.setServiceState(RileyLinkServiceState.PumpConnectorReady)
+                else if (linkIsGone(startedOnLink)) return
                 else {
                     rileyLinkServiceData.setServiceState(RileyLinkServiceState.PumpConnectorError, RileyLinkError.NoContactWithDevice)
                     rileyLinkUtil.sendBroadcastMessage(RileyLinkConst.IPC.MSG_PUMP_tunePump)
                 }
-            } else rileyLinkUtil.sendBroadcastMessage(RileyLinkConst.IPC.MSG_PUMP_tunePump)
+            } else if (linkIsGone(startedOnLink)) return
+            else rileyLinkUtil.sendBroadcastMessage(RileyLinkConst.IPC.MSG_PUMP_tunePump)
         } else {
             if (!Round.isSame(lastGoodFrequency, RileyLinkTargetFrequency.Omnipod.scanFrequencies[0])) {
                 lastGoodFrequency = RileyLinkTargetFrequency.Omnipod.scanFrequencies[0]
@@ -62,5 +72,20 @@ class InitializePumpManagerTask(
             rileyLinkCommunicationManager?.setRadioFrequencyForPump(lastGoodFrequency)
             rileyLinkServiceData.setServiceState(RileyLinkServiceState.PumpConnectorReady)
         }
+    }
+
+    /**
+     * True when the link this run started on has already been replaced.
+     *
+     * Nothing is published in that case. A new link brings its own start up sequence and its own
+     * run of this task, and that one knows the truth about the link that is up now.
+     */
+    private fun linkIsGone(startedOnLink: Int): Boolean {
+        if (rileyLinkServiceData.radioSession.stillOnSameLink(startedOnLink)) return false
+        aapsLogger.warn(
+            LTag.PUMPBTCOMM,
+            "The RileyLink link changed while the pump manager was starting up. Dropping the result and not asking for a tune up; the link that is up now starts its own."
+        )
+        return true
     }
 }

@@ -75,8 +75,20 @@ class RileyLinkBLE(
     private var mCurrentOperation: BLECommOperation? = null
     private val gattOperationSema = Semaphore(1, true)
     private var radioResponseCountNotified: Runnable? = null
-    var isConnected = false
-        private set
+    /**
+     * True while this app has a usable link to the RileyLink.
+     *
+     * Every change here counts as a new link in
+     * [app.aaps.pump.common.hw.rileylink.service.RadioSession], so a job that started on the old
+     * one can tell that what it found out no longer applies. Only a real change counts: closing a
+     * link that is already down must not cancel work that is still valid.
+     */
+    var isConnected: Boolean = false
+        private set(value) {
+            if (field == value) return
+            field = value
+            rileyLinkServiceData.radioSession.linkChanged()
+        }
 
     /** True while a GATT read or write is in flight. For the diagnostics screen. */
     val gattOperationBusy: Boolean get() = mCurrentOperation != null

@@ -32,7 +32,7 @@ class RileyLinkServiceDataBlockTest {
         preferences = mock()
         whenever(preferences.get(RileyLinkStringKey.BlockedDevices)).thenReturn("")
         whenever(preferences.get(RileyLinkStringKey.MacAddress)).thenReturn("")
-        data = RileyLinkServiceData(mock<AAPSLogger>(), mock<RileyLinkUtil>(), mock<RxBus>(), RileyLinkBlockList(preferences))
+        data = RileyLinkServiceData(mock<AAPSLogger>(), mock<RileyLinkUtil>(), mock<RxBus>(), RileyLinkBlockList(preferences), RadioSession())
     }
 
     private fun blocked(value: String) {

@@ -31,7 +31,16 @@ class RileyLinkServiceData(
      * Lives here because both the Bluetooth layer, which must refuse to connect, and the pump
      * driver, which must stop asking, need to read the same list.
      */
-    val blockList: RileyLinkBlockList
+    val blockList: RileyLinkBlockList,
+    /**
+     * Who holds the radio, and which link the radio is on.
+     *
+     * Lives here for the same reason as [blockList]: the Bluetooth layer, which counts the link
+     * changes, the service tasks, which take the radio for the length of a task, and the pump
+     * driver, which has to stop scanning when the link it was scanning on is gone, all need the
+     * same one.
+     */
+    val radioSession: RadioSession
 ) {
 
     /**

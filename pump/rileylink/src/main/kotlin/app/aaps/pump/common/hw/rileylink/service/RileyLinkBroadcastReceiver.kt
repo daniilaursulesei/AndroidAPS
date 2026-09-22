@@ -101,20 +101,7 @@ class RileyLinkBroadcastReceiver : BroadcastReceiver() {
 
             RileyLinkConst.Intents.RileyLinkReady         -> {
                 aapsLogger.warn(LTag.PUMPBTCOMM, "RileyLinkConst.Intents.RileyLinkReady")
-                // sendIPCNotification(RT2Const.IPC.MSG_note_WakingPump);
-                rileyLinkService?.rileyLinkBLE?.enableNotifications()
-                rileyLinkService?.rfSpy?.startReader() // call startReader from outside?
-                rileyLinkService?.rfSpy?.initializeRileyLink()
-                val bleVersion = rileyLinkService?.rfSpy?.getBLEVersionCached()
-                val rlVersion = rileyLinkServiceData.firmwareVersion
-                aapsLogger.debug(LTag.PUMPBTCOMM, "RfSpy version (BLE113): $bleVersion")
-                rileyLinkService?.rileyLinkServiceData?.versionBLE113 = bleVersion
-
-                aapsLogger.debug(LTag.PUMPBTCOMM, "RfSpy Radio version (CC110): ${rlVersion?.name}")
-                rileyLinkServiceData.firmwareVersion = rlVersion
-                val task: ServiceTask = initializePumpManagerTaskProvider()
-                serviceTaskExecutor.startTask(task)
-                aapsLogger.info(LTag.PUMPBTCOMM, "Announcing RileyLink open For business")
+                startUpNewLink()
                 true
             }
 
@@ -132,6 +119,55 @@ class RileyLinkBroadcastReceiver : BroadcastReceiver() {
 
             else                                          -> false
         }
+
+    /**
+     * Subscribes to the RileyLink and sets its radio up, with the radio to itself.
+     *
+     * This used to run beside whatever the service task queue happened to be doing. Both send
+     * radio commands, on different threads, and they share one reply queue, so every answer came
+     * out one command behind: `GetVersion` was answered with a wake up's reply and the CC1110
+     * version came out empty. Taking the radio here is what keeps the two apart.
+     *
+     * Running this on a link that is already gone would be work for nothing, so the link is
+     * checked once more after the wait: waiting for a tune up can take most of a minute.
+     */
+    private fun startUpNewLink() {
+        val startedOnLink = rileyLinkServiceData.radioSession.generation
+        val gotRadio = rileyLinkServiceData.radioSession.tryTake(RadioSession.START_UP_WAIT_MS)
+        if (!gotRadio)
+            aapsLogger.error(
+                LTag.PUMPBTCOMM,
+                "The start up sequence did not get the radio to itself within ${RadioSession.START_UP_WAIT_MS} ms. Running anyway, replies may be mixed up."
+            )
+        try {
+            if (!rileyLinkServiceData.radioSession.stillOnSameLink(startedOnLink)) {
+                aapsLogger.warn(LTag.PUMPBTCOMM, "The link changed while waiting for the radio. Leaving the start up to the link that is up now.")
+                rileyLinkService?.rfSpy?.diag?.decided(
+                    "Skipped the start up sequence",
+                    "The link it was for was already replaced while it waited for the radio"
+                )
+                return
+            }
+            // sendIPCNotification(RT2Const.IPC.MSG_note_WakingPump);
+            rileyLinkService?.rileyLinkBLE?.enableNotifications()
+            rileyLinkService?.rfSpy?.startReader() // call startReader from outside?
+            rileyLinkService?.rfSpy?.initializeRileyLink()
+            val bleVersion = rileyLinkService?.rfSpy?.getBLEVersionCached()
+            val rlVersion = rileyLinkServiceData.firmwareVersion
+            aapsLogger.debug(LTag.PUMPBTCOMM, "RfSpy version (BLE113): $bleVersion")
+            rileyLinkService?.rileyLinkServiceData?.versionBLE113 = bleVersion
+
+            aapsLogger.debug(LTag.PUMPBTCOMM, "RfSpy Radio version (CC110): ${rlVersion?.name}")
+            rileyLinkServiceData.firmwareVersion = rlVersion
+        } finally {
+            // The radio goes back before the next task is queued, or that task would sit in the
+            // queue waiting for a sequence that is already done.
+            if (gotRadio) rileyLinkServiceData.radioSession.release()
+        }
+        val task: ServiceTask = initializePumpManagerTaskProvider()
+        serviceTaskExecutor.startTask(task)
+        aapsLogger.info(LTag.PUMPBTCOMM, "Announcing RileyLink open For business")
+    }
 
     private fun processBluetoothBroadcasts(action: String): Boolean =
         when (action) {

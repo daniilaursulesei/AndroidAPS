@@ -296,10 +296,24 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
         // finds nothing cannot answer by itself: did this RileyLink transmit at all?
         rfspy.readRadioStats("beforeScan")
         rfspy.diag.waiting(WaitReason.TUNING)
+        // The link this scan is about. A scan holds the radio for most of a minute, and it keeps
+        // that hold while the link underneath it dies and comes back. Everything it measures
+        // after that belongs to a link that is gone, and the start up sequence of the new link is
+        // stuck behind it the whole time.
+        val startedOnLink = rileyLinkServiceData.radioSession.generation
         wakeUp(receiverDeviceAwakeForMinutes, false)
         val results = FrequencyScanResults()
 
         for (i in frequencies.indices) {
+            if (!rileyLinkServiceData.radioSession.stillOnSameLink(startedOnLink)) {
+                aapsLogger.warn(LTag.PUMPBTCOMM, "The link changed during the scan. Stopping after ${results.trials.size} of ${frequencies.size} frequencies.")
+                rfspy.diag.waiting(null)
+                rfspy.diag.decided(
+                    "Stopped the tune up",
+                    "the Bluetooth link to the RileyLink changed while it was scanning, so the results are about a link that is gone"
+                )
+                return 0.0
+            }
             val tries = 3
             val trial = FrequencyTrial()
             trial.frequencyMHz = frequencies[i]
