@@ -76,8 +76,15 @@ data class RileyLinkDiagnosticsUiState(
     val repliesLate: Int,
     /** Replies the radio never sent, even after waiting on for them. */
     val repliesLost: Int,
-    /** The last command whose reply went wrong, and how. Null when none has. */
+    /** The last command whose reply went wrong, said in plain words. Null when none has. */
     val lastReplyProblem: String?,
+    /**
+     * The headline when replies have gone to the wrong commands, or null when none have.
+     *
+     * Shown at the top of the card, next to the blocked and test mode banners, because it is the
+     * one fault on this screen that hides behind healthy looking numbers.
+     */
+    val crossedHeadline: String?,
     val pendingPermits: Int,
     val commandQueue: Int,
     val unexpectedDisconnects: Int,
@@ -409,6 +416,13 @@ fun RileyLinkDiagnosticsCard(
                 state.repliesCrossed.toString(),
                 warn = state.repliesCrossed > 0
             )
+            state.crossedHeadline?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AapsTheme.generalColors.statusCritical
+                )
+            }
             ValueRow(stringResource(R.string.rileylink_diag_replies_late), state.repliesLate.toString())
             ValueRow(stringResource(R.string.rileylink_diag_replies_lost), state.repliesLost.toString())
             state.lastReplyProblem?.let {
@@ -494,6 +508,7 @@ private fun buildPlainText(state: RileyLinkDiagnosticsUiState): String = buildSt
     appendLine("GATT operation: ${if (state.gattBusy) "busy" else "idle"}")
     appendLine("Reader queue: ${state.readerQueue}   Pending notifications: ${state.pendingPermits}   Command queue: ${state.commandQueue}")
     appendLine("Replies crossed: ${state.repliesCrossed}   late: ${state.repliesLate}   lost: ${state.repliesLost}")
+    state.crossedHeadline?.let { appendLine("  $it") }
     state.lastReplyProblem?.let { appendLine("  last reply problem: $it") }
     appendLine("Unexpected disconnects: ${state.unexpectedDisconnects}   GATT timeouts: ${state.gattWriteTimeouts}   Refused while link down: ${state.writesRefused}   Refused while blocked: ${state.writesWhileBlocked}")
     appendLine("Version bit slips: ${state.versionSlips}   Most inits at once: ${state.concurrentInitPeak}")

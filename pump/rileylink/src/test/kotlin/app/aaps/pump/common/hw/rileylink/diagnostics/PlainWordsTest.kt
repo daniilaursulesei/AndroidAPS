@@ -4,6 +4,7 @@ import app.aaps.pump.common.hw.rileylink.ble.data.FrequencyScanResults
 import app.aaps.pump.common.hw.rileylink.ble.data.FrequencyTrial
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -137,5 +138,53 @@ class PlainWordsTest {
     @Test fun `no countdown is not a countdown of zero`() {
         assertTrue(describeWait(WaitReason.TUNING, null).endsWith("frequency for the pump."))
         assertTrue(describeWait(WaitReason.TUNING, 0).endsWith("Trying again now."))
+    }
+
+    // ---- what became of a reply, in words
+
+    @Test fun `a crossed reply says the reading is wrong, not that it is missing`() {
+        val words = replyProblemWords("GetVersion", ReplyStep.CROSSED)
+
+        assertTrue(words.contains("GetVersion"), "the command has to be named")
+        assertTrue(words.contains("earlier command"), "it has to say whose answer it got")
+        assertTrue(words.contains("wrong"), "a wrong reading is worse than no reading and must read that way")
+    }
+
+    @Test fun `a late reply says nothing is out of step`() {
+        val words = replyProblemWords("GetStatistics", ReplyStep.LATE_DRAINED)
+
+        assertTrue(words.contains("too late"))
+        assertTrue(words.contains("asked again"), "the command is retried, so the reader is not left worrying")
+        assertTrue(words.contains("nothing is out of step"))
+    }
+
+    @Test fun `a lost reply says why the chip could not keep it`() {
+        val words = replyProblemWords("SendAndListen", ReplyStep.LOST)
+
+        assertTrue(words.contains("never answered"))
+        assertTrue(words.contains("one answer at a time"), "the reason belongs in the sentence")
+    }
+
+    @Test fun `an ordinary reply still has words, for completeness`() {
+        assertEquals("GetVersion was answered normally.", replyProblemWords("GetVersion", ReplyStep.IN_STEP))
+    }
+
+    @Test fun `no headline while nothing has crossed`() {
+        assertNull(crossedReplyHeadline(0))
+        assertNull(crossedReplyHeadline(-1))
+    }
+
+    @Test fun `one crossed reply reads as one, not as a number`() {
+        val headline = crossedReplyHeadline(1)
+
+        assertNotNull(headline)
+        assertTrue(headline!!.startsWith("One command"))
+    }
+
+    @Test fun `several crossed replies are counted`() {
+        val headline = crossedReplyHeadline(23)
+
+        assertNotNull(headline)
+        assertTrue(headline!!.startsWith("23 commands"))
     }
 }

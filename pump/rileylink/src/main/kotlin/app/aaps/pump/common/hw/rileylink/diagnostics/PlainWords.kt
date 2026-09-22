@@ -189,3 +189,52 @@ fun describeWait(reason: WaitReason, nextTryInSeconds: Int?): String {
 
 /** The things the driver waits for, named so the screen can say which one it is. */
 enum class WaitReason { NO_PUMP_ANSWER, WAKING_PUMP, TUNING, PUMP_BUSY, RADIO_BUSY, LINK_DOWN }
+
+/**
+ * What became of one command's reply, as a sentence.
+ *
+ * The same fact goes to two readers who want opposite things. In the log it is
+ * `step=CROSSED|owed=1`, which finds every one of them at once. On the screen, read while
+ * standing next to a pump, it has to say what went wrong without being decoded first.
+ *
+ * @param commandName the command, as the driver names it, for example `GetVersion`.
+ * @param step what happened to its reply.
+ */
+fun replyProblemWords(commandName: String, step: ReplyStep): String = when (step) {
+    ReplyStep.CROSSED      ->
+        "$commandName was given the answer to an earlier command. Anything the app read from it is wrong, " +
+            "and every answer after it belongs to the command before it until this clears."
+
+    ReplyStep.LATE_DRAINED ->
+        "The answer to $commandName came back too late to be used. It was thrown away rather than " +
+            "handed to the next command, so nothing is out of step. $commandName will be asked again."
+
+    ReplyStep.LOST         ->
+        "$commandName was never answered. The RileyLink holds one answer at a time, so two arriving " +
+            "together destroy one. $commandName will be asked again."
+
+    ReplyStep.IN_STEP      ->
+        "$commandName was answered normally."
+}
+
+/**
+ * The headline for the diagnostics screen when replies have gone to the wrong commands.
+ *
+ * Worth a line of its own because every other number on that screen can look healthy while this
+ * is happening: each command does get an answer, it is simply the wrong one. In the log where the
+ * CC1110 version read as "-", the link was up, the radio was transmitting, and nothing else said
+ * anything was wrong.
+ *
+ * @param crossed how many commands were answered with an earlier command's reply.
+ * @return the sentence, or null when nothing has gone wrong.
+ */
+fun crossedReplyHeadline(crossed: Int): String? = when {
+    crossed <= 0 -> null
+    crossed == 1 ->
+        "One command was answered with an earlier command's reply. Readings taken around that " +
+            "moment may belong to a different command."
+
+    else         ->
+        "$crossed commands were answered with an earlier command's reply. Readings taken around " +
+            "those moments may belong to a different command."
+}

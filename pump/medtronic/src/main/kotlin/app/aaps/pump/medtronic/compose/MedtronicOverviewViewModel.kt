@@ -51,6 +51,7 @@ import app.aaps.pump.common.hw.rileylink.diagnostics.RepairAction
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkSelfTest
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiagSnapshot
+import app.aaps.pump.common.hw.rileylink.diagnostics.crossedReplyHeadline
 import app.aaps.pump.common.hw.rileylink.diagnostics.checkSerial
 import app.aaps.pump.common.hw.rileylink.diagnostics.describeScan
 import app.aaps.pump.common.hw.rileylink.diagnostics.describeWait
@@ -214,6 +215,7 @@ class MedtronicOverviewViewModel(
             repliesLate = snapshot.repliesLate,
             repliesLost = snapshot.repliesLost,
             lastReplyProblem = snapshot.lastReplyProblem,
+            crossedHeadline = crossedReplyHeadline(snapshot.repliesCrossed),
             pendingPermits = rfSpy.pendingPermits,
             commandQueue = commandQueue.size(),
             unexpectedDisconnects = snapshot.unexpectedDisconnects,

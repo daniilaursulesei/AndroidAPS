@@ -204,14 +204,30 @@ class RileyLinkDiag(
     private fun markWarn(event: String, vararg pairs: Pair<String, Any?>) =
         record(DiagSeverity.WARN, event, pairs)
 
-    private fun record(severity: DiagSeverity, event: String, pairs: Array<out Pair<String, Any?>>) {
+    /**
+     * A warning that reads as a sentence on the screen and as key=value in the log.
+     *
+     * The two readers want different things. Someone standing next to a pump needs to know what
+     * went wrong without decoding `step=CROSSED|owed=1`, and someone reading a log file later
+     * wants to find every one of them at once. [words] goes on the screen, the pairs go in the
+     * log, and neither is made worse to suit the other.
+     */
+    private fun markWarnInWords(event: String, words: String, vararg pairs: Pair<String, Any?>) =
+        record(DiagSeverity.WARN, event, pairs, words)
+
+    private fun record(
+        severity: DiagSeverity,
+        event: String,
+        pairs: Array<out Pair<String, Any?>>,
+        words: String? = null
+    ) {
         val body = pairs.joinToString("|") { (k, v) -> "$k=$v" }
         val line = if (body.isEmpty()) "RLDIAG|$event" else "RLDIAG|$event|$body"
         when (severity) {
             DiagSeverity.INFO -> aapsLogger.debug(LTag.RLDIAG, line)
             DiagSeverity.WARN -> aapsLogger.warn(LTag.RLDIAG, line)
         }
-        val entry = RileyLinkDiagEvent(System.currentTimeMillis(), event, body, severity)
+        val entry = RileyLinkDiagEvent(System.currentTimeMillis(), event, words ?: body, severity)
         _snapshot.update { it.copy(events = (listOf(entry) + it.events).take(EVENT_HISTORY)) }
     }
 
@@ -433,13 +449,16 @@ class RileyLinkDiag(
                 repliesCrossed = it.repliesCrossed + if (step == ReplyStep.CROSSED) 1 else 0,
                 repliesLate = it.repliesLate + if (step == ReplyStep.LATE_DRAINED) 1 else 0,
                 repliesLost = it.repliesLost + if (step == ReplyStep.LOST) 1 else 0,
-                lastReplyProblem = "$op: ${step.name}",
+                // The sentence, not the enum name. This line is read on a screen, next to a
+                // pump, by someone who needs to know what went wrong rather than decode it.
+                lastReplyProblem = replyProblemWords(op, step),
                 lastReplyProblemAtMillis = System.currentTimeMillis()
             )
         }
         val counts = _snapshot.value
-        markWarn(
-            "REPLY", "op" to op, "step" to step.name, "owed" to owedNow,
+        markWarnInWords(
+            "REPLY", replyProblemWords(op, step),
+            "op" to op, "step" to step.name, "owed" to owedNow,
             "crossed" to counts.repliesCrossed, "late" to counts.repliesLate,
             "lost" to counts.repliesLost
         )
@@ -448,8 +467,9 @@ class RileyLinkDiag(
     /** A reply the radio owed turned up during the settle period, after its caller had gone. */
     @Synchronized
     fun replySettledLate(op: String, late: ByteArray) {
-        markWarn(
-            "REPLY_LATE", "op" to op, "len" to late.size,
+        markWarnInWords(
+            "REPLY_LATE", "The answer to $op arrived after the app had stopped waiting. It was thrown away here, so the next command still gets its own.",
+            "op" to op, "len" to late.size,
             "hex" to ByteUtil.shortHexString(late)
         )
     }
@@ -457,7 +477,10 @@ class RileyLinkDiag(
     /** The settle period ended and the reply never came. */
     @Synchronized
     fun replyNeverCame(op: String, owedNow: Int) {
-        markWarn("REPLY_LOST", "op" to op, "owed" to owedNow)
+        markWarnInWords(
+            "REPLY_LOST", "The RileyLink never answered $op, even after waiting on for it.",
+            "op" to op, "owed" to owedNow
+        )
     }
 
     // endregion
