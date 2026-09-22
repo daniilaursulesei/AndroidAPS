@@ -65,8 +65,11 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
     /** Status, RSSI and packet counter. A reply no longer than this carries no pump packet. */
     private val WAKE_UP_REPLY_HEADER_SIZE = 3
 
-    /** Roughly how long a wake up takes: a 3 s burst of repeats and then a 25 s listen. */
-    private val WAKE_UP_SECONDS = 28
+    /**
+     * Wake ups in a row that went unanswered. Drives how long to wait before the next one and
+     * how long to listen on it, so a pump that has gone is not hammered. Reset by any answer.
+     */
+    private var consecutiveWakeFailures = 0
     private var timeoutCount = 0
 
     @Throws(RileyLinkCommunicationException::class)
@@ -165,36 +168,52 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
 
         setPumpDeviceState(PumpDeviceState.WakingUp)
 
-        if (force) nextWakeUpRequired = 0L
+        if (force) {
+            // A forced wake up is a deliberate one, so it gets a clean slate: no backoff to wait
+            // out and the full listen window rather than the short retry one.
+            nextWakeUpRequired = 0L
+            consecutiveWakeFailures = 0
+        }
 
         if (System.currentTimeMillis() > nextWakeUpRequired) {
             // Say what this is before it starts. A wake up is a 3 s burst followed by a 25 s
             // listen, and a screen that simply stops for half a minute reads as a crash.
-            rfspy.diag.waiting(WaitReason.WAKING_PUMP, WAKE_UP_SECONDS)
+            val listenMs = wakeUpListenMs(consecutiveWakeFailures)
+            rfspy.diag.waiting(WaitReason.WAKING_PUMP, wakeUpSecondsFor(consecutiveWakeFailures))
             aapsLogger.info(LTag.PUMPBTCOMM, "Waking pump...")
 
             val pumpMsgContent = createPumpMessageContent(RLMessageType.ReadSimpleData) // simple
             val resp = rfspy.transmitThenReceive(
                 RadioPacket(rileyLinkUtil, pumpMsgContent), 0.toByte(), 200.toByte(),
-                0.toByte(), 0.toByte(), 25000, 0.toByte()
+                0.toByte(), 0.toByte(), listenMs, 0.toByte()
             )
             aapsLogger.info(LTag.PUMPBTCOMM, "wakeup: raw response is " + shortHexString(resp?.raw))
 
             rfspy.diag.waiting(null)
             if (wakeUpSucceeded(resp)) {
+                consecutiveWakeFailures = 0
                 nextWakeUpRequired = System.currentTimeMillis() + (receiverDeviceAwakeForMinutes.toLong() * 60 * 1000)
                 rfspy.diag.decided(
                     "Treating the pump as awake for $receiverDeviceAwakeForMinutes min",
                     "it answered the wake up"
                 )
             } else {
-                // The pump is not awake. Say so, so the next command wakes it again instead of
-                // talking into a silence.
-                nextWakeUpRequired = 0L
-                aapsLogger.warn(LTag.PUMPBTCOMM, "Wake up failed, pump is not awake. Will wake again on the next command.")
+                // The pump is not awake, so the awake window must NOT be set: commands sent
+                // during it would go to a pump that cannot hear them. But clearing it outright
+                // made every following command pay another 26 s wake, which on an absent pump
+                // ran the radio at a near 100 % duty cycle and flattened the RileyLink battery.
+                // Back off instead: soon at first, then further apart.
+                consecutiveWakeFailures++
+                val backoffMs = wakeUpBackoffMs(consecutiveWakeFailures)
+                nextWakeUpRequired = System.currentTimeMillis() + backoffMs
+                aapsLogger.warn(
+                    LTag.PUMPBTCOMM,
+                    "Wake up failed, pump is not awake. Next wake up in ${backoffMs / 1000} s " +
+                        "(failure $consecutiveWakeFailures in a row)."
+                )
                 rfspy.diag.decided(
-                    "Will wake the pump again on the next command",
-                    "the wake up was not answered, so the pump cannot be assumed awake"
+                    "Waiting ${backoffMs / 1000} s before waking the pump again",
+                    "$consecutiveWakeFailures wake up(s) in a row went unanswered"
                 )
             }
         } else {
