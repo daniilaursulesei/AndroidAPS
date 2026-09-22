@@ -15,6 +15,7 @@ import app.aaps.pump.common.hw.rileylink.ble.data.RFSpyResponse
 import app.aaps.pump.common.hw.rileylink.ble.data.RLMessage
 import app.aaps.pump.common.hw.rileylink.ble.data.RadioPacket
 import app.aaps.pump.common.hw.rileylink.ble.data.RadioResponse
+import app.aaps.pump.common.hw.rileylink.diagnostics.WaitReason
 import app.aaps.pump.common.hw.rileylink.ble.defs.RLMessageType
 import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkBLEError
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkPumpDevice
@@ -63,6 +64,9 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
 
     /** Status, RSSI and packet counter. A reply no longer than this carries no pump packet. */
     private val WAKE_UP_REPLY_HEADER_SIZE = 3
+
+    /** Roughly how long a wake up takes: a 3 s burst of repeats and then a 25 s listen. */
+    private val WAKE_UP_SECONDS = 28
     private var timeoutCount = 0
 
     @Throws(RileyLinkCommunicationException::class)
@@ -101,6 +105,10 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
 
                     if (diff > ALLOWED_PUMP_UNREACHABLE) {
                         aapsLogger.warn(LTag.PUMPBTCOMM, "We reached max time that Pump can be unreachable. Starting Tuning.")
+                        rfspy.diag.decided(
+                            "Started a tune up",
+                            "the pump has not answered for ${diff / 60000} min, and the limit is ${ALLOWED_PUMP_UNREACHABLE / 60000} min"
+                        )
                         rfspy.readRadioStats("pumpUnreachable")
                         // Once, not once per timeout. Every timeout while the pump is away used
                         // to queue its own run, and they were served one after the other.
@@ -160,6 +168,9 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
         if (force) nextWakeUpRequired = 0L
 
         if (System.currentTimeMillis() > nextWakeUpRequired) {
+            // Say what this is before it starts. A wake up is a 3 s burst followed by a 25 s
+            // listen, and a screen that simply stops for half a minute reads as a crash.
+            rfspy.diag.waiting(WaitReason.WAKING_PUMP, WAKE_UP_SECONDS)
             aapsLogger.info(LTag.PUMPBTCOMM, "Waking pump...")
 
             val pumpMsgContent = createPumpMessageContent(RLMessageType.ReadSimpleData) // simple
@@ -169,13 +180,22 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
             )
             aapsLogger.info(LTag.PUMPBTCOMM, "wakeup: raw response is " + shortHexString(resp?.raw))
 
+            rfspy.diag.waiting(null)
             if (wakeUpSucceeded(resp)) {
                 nextWakeUpRequired = System.currentTimeMillis() + (receiverDeviceAwakeForMinutes.toLong() * 60 * 1000)
+                rfspy.diag.decided(
+                    "Treating the pump as awake for $receiverDeviceAwakeForMinutes min",
+                    "it answered the wake up"
+                )
             } else {
                 // The pump is not awake. Say so, so the next command wakes it again instead of
                 // talking into a silence.
                 nextWakeUpRequired = 0L
                 aapsLogger.warn(LTag.PUMPBTCOMM, "Wake up failed, pump is not awake. Will wake again on the next command.")
+                rfspy.diag.decided(
+                    "Will wake the pump again on the next command",
+                    "the wake up was not answered, so the pump cannot be assumed awake"
+                )
             }
         } else {
             aapsLogger.debug(LTag.PUMPBTCOMM, "Last pump communication was recent, not waking pump.")
@@ -256,6 +276,7 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
         // counters either side of it gives the clearest answer to the one question a scan that
         // finds nothing cannot answer by itself: did this RileyLink transmit at all?
         rfspy.readRadioStats("beforeScan")
+        rfspy.diag.waiting(WaitReason.TUNING)
         wakeUp(receiverDeviceAwakeForMinutes, false)
         val results = FrequencyScanResults()
 
@@ -324,12 +345,25 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
 
         val bestTrial = results.trials[results.trials.size - 1]
         results.bestFrequencyMHz = bestTrial.frequencyMHz
+        // The whole table, not only the frequency it picked. A scan where every frequency scored
+        // the same means the pump answered none of them, and reduced to one number that reads
+        // exactly like a scan which found a clear winner.
+        rfspy.diag.scanFinished(results)
+        rfspy.diag.waiting(null)
         if (bestTrial.successes > 0) {
             rfspy.setBaseFrequency(results.bestFrequencyMHz)
             aapsLogger.debug(LTag.PUMPBTCOMM, "Best frequency found: " + results.bestFrequencyMHz)
+            rfspy.diag.decided(
+                "Using %.2f MHz".format(results.bestFrequencyMHz),
+                "strongest of ${results.trials.size} frequencies, answered ${bestTrial.successes} of ${bestTrial.tries} tries"
+            )
             return results.bestFrequencyMHz
         } else {
             aapsLogger.error(LTag.PUMPBTCOMM, "No pump response during scan.")
+            rfspy.diag.decided(
+                "Gave up the tune up",
+                "the pump answered on none of the ${results.trials.size} frequencies tried"
+            )
             return 0.0
         }
     }

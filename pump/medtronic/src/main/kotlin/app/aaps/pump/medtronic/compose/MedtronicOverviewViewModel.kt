@@ -42,6 +42,8 @@ import app.aaps.pump.common.compose.BlockableRileyLink
 import app.aaps.pump.common.hw.rileylink.ble.RileyLinkBLE
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkServiceState
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkTargetDevice
+import app.aaps.pump.common.compose.DiagDecisionLine
+import app.aaps.pump.common.compose.ScanRowLine
 import app.aaps.pump.common.hw.rileylink.diagnostics.DiagSeverity
 import app.aaps.pump.common.hw.rileylink.diagnostics.FaultInjector
 import app.aaps.pump.common.hw.rileylink.diagnostics.InjectableFault
@@ -49,6 +51,9 @@ import app.aaps.pump.common.hw.rileylink.diagnostics.RepairAction
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkSelfTest
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiag
 import app.aaps.pump.common.hw.rileylink.diagnostics.RileyLinkDiagSnapshot
+import app.aaps.pump.common.hw.rileylink.diagnostics.checkSerial
+import app.aaps.pump.common.hw.rileylink.diagnostics.describeScan
+import app.aaps.pump.common.hw.rileylink.diagnostics.describeWait
 import app.aaps.pump.common.hw.rileylink.service.FirmwareVersionStore
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
 import app.aaps.pump.common.hw.rileylink.service.tasks.ResetRileyLinkConfigurationTask
@@ -180,6 +185,9 @@ class MedtronicOverviewViewModel(
     )
 
     private fun buildDiagnosticsState(snapshot: RileyLinkDiagSnapshot): RileyLinkDiagnosticsUiState =
+        // Which pump the radio is really calling, against the one the settings hold. These two
+        // can disagree: the pump ID is read into the radio layer once, when the service is built.
+        val serialCheck = checkSerial(medtronicPumpStatus.serialNumber, rileyLinkServiceData.pumpIDBytes)
         RileyLinkDiagnosticsUiState(
             linkUp = snapshot.linkUp,
             ble113Version = snapshot.ble113Version,
@@ -212,6 +220,30 @@ class MedtronicOverviewViewModel(
             versionSlips = snapshot.versionSlipsSeen,
             concurrentInitPeak = snapshot.concurrentInitPeak,
             armedFault = faultInjector.armed.value?.title,
+            // Words, not bytes. The hex stays underneath for a bug report.
+            lastResponseWords = snapshot.lastResponseWords,
+            // Read live rather than from the recorder: the settings can be changed at any moment
+            // and the whole point is to catch the instant the two stop agreeing.
+            serialConfigured = serialCheck.configured,
+            serialOnWire = serialCheck.onWire,
+            serialAgree = serialCheck.agree,
+            scanRows = snapshot.lastScan.map { row ->
+                ScanRowLine(
+                    frequency = rh.gs(RileyLinkR.string.rileylink_diag_scan_frequency_value, "%.2f".format(row.frequencyMHz)),
+                    answered = rh.gs(RileyLinkR.string.rileylink_diag_scan_answered_value, row.answered, row.tries),
+                    signal = rh.gs(RileyLinkR.string.rileylink_diag_scan_signal_value, row.averageRssi),
+                    best = row.best
+                )
+            },
+            scanVerdict = snapshot.lastScan.takeIf { it.isNotEmpty() }?.let { describeScan(it) },
+            waitingWords = snapshot.waitReason?.let { describeWait(it, snapshot.waitNextTrySeconds) },
+            decisions = snapshot.decisions.map { decision ->
+                DiagDecisionLine(
+                    time = dateUtil.timeStringWithSeconds(decision.atMillis),
+                    what = decision.what,
+                    why = decision.why
+                )
+            },
             events = snapshot.events.map { event ->
                 DiagEventLine(
                     time = dateUtil.timeStringWithSeconds(event.atMillis),

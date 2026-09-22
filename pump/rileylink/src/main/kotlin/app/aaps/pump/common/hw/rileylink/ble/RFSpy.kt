@@ -64,7 +64,10 @@ class RFSpy(
     private val rileyLinkServiceData: RileyLinkServiceData,
     private val rileyLinkUtil: RileyLinkUtil,
     private val rfSpyResponseProvider: () -> RFSpyResponse,
-    private val diag: RileyLinkDiag,
+    // Not private: RileyLinkCommunicationManager records the scan and the decisions it takes,
+    // and it reaches the recorder through the RFSpy it already holds rather than through a new
+    // constructor parameter on an abstract class that two drivers extend.
+    val diag: RileyLinkDiag,
     private val firmwareVersionStore: FirmwareVersionStore,
     private val faultInjector: FaultInjector
 ) {

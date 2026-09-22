@@ -3,6 +3,7 @@ package app.aaps.pump.common.hw.rileylink.diagnostics
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.utils.pump.ByteUtil
+import app.aaps.pump.common.hw.rileylink.ble.data.FrequencyScanResults
 import app.aaps.pump.common.hw.rileylink.ble.data.RadioStats
 import app.aaps.pump.common.hw.rileylink.ble.defs.RileyLinkEncodingType
 import dev.zacsweers.metro.AppScope
@@ -81,6 +82,13 @@ data class RileyLinkDiagSnapshot(
     val lastCommandDetail: String? = null,
     val lastCommandAtMillis: Long? = null,
     val lastResponseHex: String? = null,
+    /**
+     * The same reply in words.
+     *
+     * Worked out here, where the bytes are already in hand, rather than on the screen: turning
+     * the hex text back into bytes to read it a second time is one more thing that can be wrong.
+     */
+    val lastResponseWords: String? = null,
     val lastResponseAtMillis: Long? = null,
     val lastWaitedMs: Long? = null,
     val unexpectedDisconnects: Int = 0,
@@ -103,7 +111,39 @@ data class RileyLinkDiagSnapshot(
     /** Radio commands refused because the RileyLink is blocked. */
     val writesWhileBlocked: Int = 0,
     /** Most recent markers, newest first. Capped at [RileyLinkDiag.EVENT_HISTORY]. */
-    val events: List<RileyLinkDiagEvent> = emptyList()
+    val events: List<RileyLinkDiagEvent> = emptyList(),
+    /**
+     * The pump serial in the settings against the one really in the packets.
+     *
+     * Null until a packet has been built. These two can disagree - the pump ID is loaded into
+     * the radio layer once, when the service is built - and when they do, every command goes to
+     * a pump that is not there while the screen shows the right number.
+     */
+    val serialCheck: SerialCheck? = null,
+    /** The last frequency scan, one row per frequency tried. Empty until a scan has run. */
+    val lastScan: List<ScanRow> = emptyList(),
+    val lastScanAtMillis: Long? = null,
+    /** What the driver is waiting for right now, or null when it is not waiting. */
+    val waitReason: WaitReason? = null,
+    /** Seconds until the next attempt, when one is scheduled. */
+    val waitNextTrySeconds: Int? = null,
+    /** What the driver decided and why, newest first. Capped at [RileyLinkDiag.DECISION_HISTORY]. */
+    val decisions: List<DiagDecision> = emptyList()
+)
+
+/**
+ * One choice the driver made, in words.
+ *
+ * The screen showed state but never intent. "Tuning up" tells you what it is doing and not why it
+ * started, and the why is the part a person needs to judge whether the app is behaving sensibly.
+ *
+ * @property what the action taken.
+ * @property why the condition that caused it, with the numbers that were compared.
+ */
+data class DiagDecision(
+    val atMillis: Long,
+    val what: String,
+    val why: String
 )
 
 /**
@@ -259,6 +299,7 @@ class RileyLinkDiag(
             _snapshot.update {
                 it.copy(
                     lastResponseHex = null,
+                    lastResponseWords = describeReply(name, null),
                     lastResponseAtMillis = null,
                     lastWaitedMs = waitedMs,
                     chipState = ChipState.SILENT,
@@ -271,6 +312,7 @@ class RileyLinkDiag(
             _snapshot.update {
                 it.copy(
                     lastResponseHex = ByteUtil.shortHexString(raw),
+                    lastResponseWords = describeReply(name, raw),
                     lastResponseAtMillis = now,
                     lastWaitedMs = waitedMs,
                     chipState = ChipState.RESPONDING,
@@ -473,6 +515,59 @@ class RileyLinkDiag(
 
     // endregion
 
+    // region what the driver chose to do
+
+    /**
+     * Record which pump the radio is really calling.
+     *
+     * Called wherever a pump packet is built, so the screen compares the two values that matter
+     * rather than the one the settings happen to hold.
+     */
+    @Synchronized
+    fun pumpAddress(configuredSerial: String?, addressBytes: ByteArray?) {
+        val check = checkSerial(configuredSerial, addressBytes)
+        if (_snapshot.value.serialCheck == check) return          // only on a change, not per packet
+        _snapshot.update { it.copy(serialCheck = check) }
+        if (check.agree) {
+            mark("PUMP_ADDRESS", "serial" to check.onWire)
+        } else {
+            markWarn(
+                "PUMP_ADDRESS_MISMATCH",
+                "configured" to (check.configured ?: "none"),
+                "onWire" to (check.onWire ?: "none")
+            )
+        }
+    }
+
+    /** Record the whole frequency scan, not only the frequency it picked. */
+    @Synchronized
+    fun scanFinished(results: FrequencyScanResults?) {
+        val rows = scanRows(results)
+        _snapshot.update { it.copy(lastScan = rows, lastScanAtMillis = System.currentTimeMillis()) }
+        mark("SCAN_RESULT", "rows" to rows.size, "verdict" to describeScan(rows))
+    }
+
+    /** Record a choice the driver made, with the reason that drove it. */
+    @Synchronized
+    fun decided(what: String, why: String) {
+        val entry = DiagDecision(System.currentTimeMillis(), what, why)
+        _snapshot.update { it.copy(decisions = (listOf(entry) + it.decisions).take(DECISION_HISTORY)) }
+        mark("DECISION", "what" to what, "why" to why)
+    }
+
+    /**
+     * Record what the driver is waiting for, so a long pause can be read as a countdown.
+     *
+     * Pass null to say it is not waiting any more.
+     */
+    @Synchronized
+    fun waiting(reason: WaitReason?, nextTrySeconds: Int? = null) {
+        _snapshot.update { it.copy(waitReason = reason, waitNextTrySeconds = nextTrySeconds) }
+        if (reason != null) mark("WAITING", "reason" to reason.name, "nextIn" to (nextTrySeconds ?: "-"))
+    }
+
+    // endregion
+
     companion object {
 
         /**
@@ -482,6 +577,14 @@ class RileyLinkDiag(
          * rebuilding the list on every marker costs nothing. The full history is in the log.
          */
         const val EVENT_HISTORY = 40
+
+        /**
+         * How many decisions to keep.
+         *
+         * Fewer than the markers: a decision is rare and each one matters, so a short list that
+         * can be read at a glance beats a long one that has to be scrolled.
+         */
+        const val DECISION_HISTORY = 12
 
     }
 }

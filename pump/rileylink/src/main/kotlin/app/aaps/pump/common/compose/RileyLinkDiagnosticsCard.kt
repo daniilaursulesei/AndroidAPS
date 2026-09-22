@@ -77,7 +77,37 @@ data class RileyLinkDiagnosticsUiState(
     val concurrentInitPeak: Int,
     val events: List<DiagEventLine>,
     /** Name of the fault armed for testing, or null. Drives the warning banner. */
-    val armedFault: String?
+    val armedFault: String?,
+    /** The last reply in words rather than bytes. Null when nothing has come back yet. */
+    val lastResponseWords: String? = null,
+    /** The pump serial in the settings, and the one really in the packets. */
+    val serialConfigured: String? = null,
+    val serialOnWire: String? = null,
+    /** False when those two disagree, which means every command is going to the wrong pump. */
+    val serialAgree: Boolean = true,
+    /** One row per frequency of the last scan, weakest first. */
+    val scanRows: List<ScanRowLine> = emptyList(),
+    /** The scan in one sentence, or null when none has run. */
+    val scanVerdict: String? = null,
+    /** Why the driver is waiting, and for how long. Null when it is not waiting. */
+    val waitingWords: String? = null,
+    /** What the driver chose to do, newest first. */
+    val decisions: List<DiagDecisionLine> = emptyList()
+)
+
+/** One row of the frequency table, already formatted. */
+data class ScanRowLine(
+    val frequency: String,
+    val answered: String,
+    val signal: String,
+    val best: Boolean
+)
+
+/** One decision the driver took, already formatted. */
+data class DiagDecisionLine(
+    val time: String,
+    val what: String,
+    val why: String
 )
 
 /**
@@ -255,6 +285,15 @@ fun RileyLinkDiagnosticsCard(
 
             LabelRow(stringResource(R.string.rileylink_diag_last_response), state.lastResponseAt)
             if (state.lastResponseHex != null) {
+                // The words first, the bytes under them. The bytes are what you paste into a bug
+                // report; the words are what you read while standing next to the pump.
+                state.lastResponseWords?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
                 MonoText(state.lastResponseHex)
             } else {
                 Text(
@@ -263,6 +302,79 @@ fun RileyLinkDiagnosticsCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = AapsTheme.generalColors.statusCritical
                 )
+            }
+
+            state.waitingWords?.let {
+                Spacer(Modifier.size(AapsSpacing.small))
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AapsTheme.generalColors.statusWarning
+                )
+            }
+
+            Spacer(Modifier.size(AapsSpacing.small))
+            HorizontalDivider()
+
+            // WHICH PUMP IS IT ACTUALLY CALLING. The settings screen and the radio layer can hold
+            // different serials, because the pump ID is read into the radio layer once when the
+            // service is built. When they disagree every packet goes to a pump that is not there
+            // and nothing else on any screen says so.
+            Text(
+                text = stringResource(R.string.rileylink_diag_pump_called),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            ValueRow(
+                stringResource(R.string.rileylink_diag_serial_configured),
+                state.serialConfigured ?: stringResource(R.string.rileylink_diag_none)
+            )
+            ValueRow(
+                stringResource(R.string.rileylink_diag_serial_on_wire),
+                state.serialOnWire ?: stringResource(R.string.rileylink_diag_none)
+            )
+            if (!state.serialAgree) {
+                Text(
+                    text = stringResource(R.string.rileylink_diag_serial_mismatch),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AapsTheme.generalColors.statusCritical
+                )
+            }
+
+            Spacer(Modifier.size(AapsSpacing.small))
+            HorizontalDivider()
+
+            Text(
+                text = stringResource(R.string.rileylink_diag_scan),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            state.scanVerdict?.let { DetailText(it) }
+            if (state.scanRows.isNotEmpty()) {
+                ScanHeaderRow()
+                state.scanRows.forEach { ScanTableRow(it) }
+            }
+
+            Spacer(Modifier.size(AapsSpacing.small))
+            HorizontalDivider()
+
+            Text(
+                text = stringResource(R.string.rileylink_diag_decisions),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            if (state.decisions.isEmpty()) {
+                DetailText(stringResource(R.string.rileylink_diag_decisions_empty))
+            } else {
+                state.decisions.forEach { decision ->
+                    Text(
+                        text = "${decision.time}  ${decision.what}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    DetailText(stringResource(R.string.rileylink_diag_because, decision.why))
+                }
             }
 
             Spacer(Modifier.size(AapsSpacing.small))
@@ -362,6 +474,59 @@ private fun buildPlainText(state: RileyLinkDiagnosticsUiState): String = buildSt
     appendLine()
     appendLine("Live events, newest first:")
     state.events.forEach { appendLine("${it.time}  ${it.text}") }
+}
+
+/** Column headings for the frequency table. */
+@Composable
+private fun ScanHeaderRow() {
+    Row(modifier = Modifier.fillMaxWidth().padding(top = AapsSpacing.extraSmall)) {
+        Text(
+            text = stringResource(R.string.rileylink_diag_scan_frequency),
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.weight(1.2f)
+        )
+        Text(
+            text = stringResource(R.string.rileylink_diag_scan_answered),
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = stringResource(R.string.rileylink_diag_scan_signal),
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+/**
+ * One frequency of the scan.
+ *
+ * The frequency the scan picked is marked, because "it answered here" and "this is the one it
+ * will use" are different facts and the table is read to compare them.
+ */
+@Composable
+private fun ScanTableRow(row: ScanRowLine) {
+    val weight = if (row.best) FontWeight.SemiBold else FontWeight.Normal
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = if (row.best) "${row.frequency} *" else row.frequency,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = weight,
+            modifier = Modifier.weight(1.2f)
+        )
+        Text(
+            text = row.answered,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = weight,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = row.signal,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = weight,
+            modifier = Modifier.weight(1f)
+        )
+    }
 }
 
 @Composable

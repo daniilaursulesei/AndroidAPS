@@ -125,6 +125,20 @@
 
     <string name="rileylink_diag_events">Live events</string>
     <string name="rileylink_diag_events_empty">Nothing recorded yet</string>
+    <string name="rileylink_diag_pump_called">Which pump is being called</string>
+    <string name="rileylink_diag_serial_configured">Serial in the settings</string>
+    <string name="rileylink_diag_serial_on_wire">Serial in the packets</string>
+    <string name="rileylink_diag_serial_mismatch">These do not match. Every command is going to a different pump than the one in the settings. Force stop AndroidAPS and open it again to load the serial into the radio.</string>
+    <string name="rileylink_diag_scan">Last frequency scan</string>
+    <string name="rileylink_diag_scan_frequency">Frequency</string>
+    <string name="rileylink_diag_scan_answered">Answered</string>
+    <string name="rileylink_diag_scan_signal">Signal</string>
+    <string name="rileylink_diag_scan_answered_value" comment="%1$d=tries that got an answer, %2$d=tries made. Example: 2 of 3">%1$d of %2$d</string>
+    <string name="rileylink_diag_scan_signal_value" comment="%1$d=signal strength in dBm, always negative. Example: -55 dBm">%1$d dBm</string>
+    <string name="rileylink_diag_scan_frequency_value" comment="%1$s=frequency in MHz. Example: 916.65 MHz">%1$s MHz</string>
+    <string name="rileylink_diag_decisions">What the app decided</string>
+    <string name="rileylink_diag_decisions_empty">No decisions taken yet</string>
+    <string name="rileylink_diag_because" comment="%1$s=the reason for the decision. Example: because the pump has not answered for 12 min">because %1$s</string>
     <string name="rileylink_diag_copy">Copy diagnostics</string>
     <string name="rileylink_diag_copied">Diagnostics copied to clipboard</string>
     <string name="rileylink_diag_cached_firmware">Stored for this device</string>
