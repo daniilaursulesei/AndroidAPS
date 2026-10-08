@@ -240,6 +240,50 @@ abstract class RileyLinkService : Service() {
         rileyLinkServiceData.setServiceState(RileyLinkServiceState.BluetoothReady)
     }
 
+    // ---- recover a lost Bluetooth link --------------------------------------------------------
+    //
+    // On an unexpected drop the Bluetooth client is kept open so Android autoConnect can bring the
+    // link back on its own (see RileyLinkBLE.onConnectionStateChange). That is enough most of the
+    // time, but autoConnect is unreliable after a long time out of range, and a GATT 133 closes the
+    // client outright - and then nothing re-opens the link, so the pump is unreachable until the app
+    // is restarted. This is the watchdog for that: once the link has been down past a short grace
+    // period (long enough to give autoConnect its chance first), it closes any stale client and
+    // opens a fresh one, retried on a bounded cadence. Safe to call on a timer; it does nothing
+    // while connected, while the device is deliberately blocked, or with no stored address.
+    private var linkDownSinceMillis = 0L
+    private var lastReopenMillis = 0L
+
+    fun reconnectIfLinkLost() {
+        if (rileyLinkBLE.isConnected) {
+            linkDownSinceMillis = 0L
+            return
+        }
+        if (rileyLinkServiceData.isCurrentDeviceBlocked) return
+        val address = rileyLinkServiceData.rileyLinkAddress
+            ?: rileyLinkServiceData.blockList.configuredAddress() ?: return
+
+        val now = System.currentTimeMillis()
+        if (linkDownSinceMillis == 0L) {
+            // First tick that sees the link down: note it, and let autoConnect try first.
+            linkDownSinceMillis = now
+            return
+        }
+        if (now - linkDownSinceMillis < RECONNECT_GRACE_MS) return
+        if (now - lastReopenMillis < RECONNECT_RETRY_MS) return
+        lastReopenMillis = now
+
+        aapsLogger.info(
+            LTag.PUMPBTCOMM,
+            "Bluetooth link down for ${(now - linkDownSinceMillis) / 1000}s and autoConnect has not " +
+                "recovered it; closing any stale client and reopening $address"
+        )
+        // Drop whatever client is there - a dead autoConnect, or one a GATT 133 already closed - so
+        // the fresh connectGatt cannot leave a second client behind.
+        rileyLinkBLE.close()
+        rileyLinkServiceData.setServiceState(RileyLinkServiceState.RileyLinkInitializing)
+        rileyLinkBLE.findRileyLink(address)
+    }
+
     fun changeRileyLinkEncoding(encodingType: RileyLinkEncodingType) {
         rfSpy.setRileyLinkEncoding(encodingType)
     }
@@ -249,4 +293,13 @@ abstract class RileyLinkService : Service() {
     }
 
     abstract fun verifyConfiguration(forceRileyLinkAddressRenewal: Boolean): Boolean
+
+    companion object {
+
+        // Give Android autoConnect this long to recover a dropped link before forcing a reopen.
+        private const val RECONNECT_GRACE_MS = 90_000L
+
+        // Space the forced reopen attempts so a device that is simply out of range is not hammered.
+        private const val RECONNECT_RETRY_MS = 60_000L
+    }
 }

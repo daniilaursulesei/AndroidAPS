@@ -38,14 +38,19 @@ class ProbeScheduleTest {
             schedule.onProbeFailed(now)
             seen.add(schedule.intervalMinutes)
         }
-        assertThat(seen).containsExactly(2, 4, 8, 16, 30, 30, 30, 30).inOrder()
+        // Doubles 1->2->4, then holds at the 5 min cap.
+        assertThat(seen).containsExactly(2, 4, 5, 5, 5, 5, 5, 5).inOrder()
+        assertThat(seen.last()).isEqualTo(ProbeSchedule.DEFAULT_MAX_INTERVAL_MINUTES)
     }
 
     @Test
-    fun `the real outage costs 19 probes, not one every minute`() {
-        // 7 h 44 min, the logged case.
-        val probes = ProbeSchedule().runUnreachableFor(464)
-        assertThat(probes).isEqualTo(19)
+    fun `a long outage settles to one probe per cap interval, not one every minute`() {
+        // 7 h 44 min, the logged case. Far fewer than one probe a minute, and paced by the cap.
+        val minutes = 464
+        val probes = ProbeSchedule().runUnreachableFor(minutes)
+        val cap = ProbeSchedule.DEFAULT_MAX_INTERVAL_MINUTES
+        assertThat(probes).isAtMost(minutes / cap + 6)
+        assertThat(probes).isAtLeast(minutes / cap - 6)
     }
 
     @Test
@@ -71,6 +76,7 @@ class ProbeScheduleTest {
 
     @Test
     fun `a flapping link keeps the long interval instead of restarting at one minute`() {
+        val cap = ProbeSchedule.DEFAULT_MAX_INTERVAL_MINUTES
         val schedule = ProbeSchedule()
         // Back off to the cap.
         schedule.shouldProbe(now)
@@ -79,16 +85,16 @@ class ProbeScheduleTest {
             schedule.shouldProbe(now)
             schedule.onProbeFailed(now)
         }
-        assertThat(schedule.intervalMinutes).isEqualTo(30)
+        assertThat(schedule.intervalMinutes).isEqualTo(cap)
 
         // Pump answers, then drops out again a minute later.
         schedule.onProbeSucceeded(now)
         schedule.onHealthy(now)
         now += minute
 
-        assertThat(schedule.intervalMinutes).isEqualTo(30)
-        assertThat(schedule.shouldProbe(now)).isFalse()     // re-arms at 30, not 1
-        now += 29 * minute
+        assertThat(schedule.intervalMinutes).isEqualTo(cap)
+        assertThat(schedule.shouldProbe(now)).isFalse()     // re-arms at the cap, not 1
+        now += (cap - 1) * minute
         assertThat(schedule.shouldProbe(now)).isFalse()
         now += 2 * minute
         assertThat(schedule.shouldProbe(now)).isTrue()

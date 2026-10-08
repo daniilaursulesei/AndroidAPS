@@ -402,6 +402,8 @@ class MedtronicPumpPlugin(
      * place to recover from.
      */
     override fun doCustomScheduledActions() {
+        // Recover the Bluetooth link first (when it is down), then the pump (when the link is up).
+        rileyLinkMedtronicService?.reconnectIfLinkLost()
         probeForPumpIfWaiting()
     }
 
@@ -414,9 +416,14 @@ class MedtronicPumpPlugin(
         }
 
         val service = rileyLinkMedtronicService ?: return
+        // No point probing the pump over a dead Bluetooth link; reconnectIfLinkLost() owns that case.
+        if (!service.rileyLinkBLE.isConnected) return
         // Do not step on a radio transaction that is already running.
         if (service.rfSpy.radioBusy || isBusy()) return
-        if (!probeSchedule.shouldProbe(now)) return
+        // Probe on the backoff schedule, but do not make real work wait for it: if a command is
+        // queued the loop or the user needs the pump now, so probe this tick regardless.
+        val workWaiting = commandQueue.size() > 0
+        if (!workWaiting && !probeSchedule.shouldProbe(now)) return
 
         if (service.medtronicCommunicationManager.probeForDevice()) {
             probeSchedule.onProbeSucceeded(now)

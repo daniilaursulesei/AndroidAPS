@@ -85,7 +85,12 @@ class ProbeSchedule(
     companion object {
 
         const val DEFAULT_FIRST_INTERVAL_MINUTES = 1
-        const val DEFAULT_MAX_INTERVAL_MINUTES = 30
+
+        // Capped low on purpose. A higher cap saves a little RileyLink battery while the pump is
+        // gone, but it also sets how long the loop stays blind after the pump comes back in range:
+        // the recovery probe is the only thing that notices. 5 min bounds that worst case, at a
+        // cost of about one extra probe (~45 uAh) every five minutes.
+        const val DEFAULT_MAX_INTERVAL_MINUTES = 5
         const val DEFAULT_SETTLE_MINUTES = 30
     }
 }
