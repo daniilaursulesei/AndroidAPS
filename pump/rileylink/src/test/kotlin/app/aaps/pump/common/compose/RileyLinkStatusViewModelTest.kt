@@ -8,6 +8,7 @@ import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.pump.common.events.EventRileyLinkDeviceStatusChange
 import app.aaps.pump.common.hw.rileylink.RileyLinkUtil
+import app.aaps.pump.common.hw.rileylink.ble.RileyLinkBLE
 import app.aaps.pump.common.hw.rileylink.service.RileyLinkServiceData
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +44,7 @@ internal class RileyLinkStatusViewModelTest {
 
     // Concrete final classes -> mockito-kotlin mock() (Mockito 5 inline handles finals)
     private val rileyLinkServiceData: RileyLinkServiceData = mock()
+    private val rileyLinkBLE: RileyLinkBLE = mock()
     private val rileyLinkUtil: RileyLinkUtil = mock()
 
     // A plain Pump mock is NOT a RileyLinkPumpDevice, so the `as?` cast in buildState() yields null.
@@ -61,7 +63,7 @@ internal class RileyLinkStatusViewModelTest {
         whenever(rxBus.toFlow(EventRileyLinkDeviceStatusChange::class)).thenReturn(emptyFlow())
 
         sut = RileyLinkStatusViewModel(
-            rh, rileyLinkServiceData, rileyLinkUtil, activePlugin, dateUtil, preferences, rxBus
+            rh, rileyLinkServiceData, rileyLinkBLE, rileyLinkUtil, activePlugin, dateUtil, preferences, rxBus
         )
     }
 

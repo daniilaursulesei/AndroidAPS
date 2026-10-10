@@ -110,13 +110,27 @@ class RileyLinkServiceData(
         rxBus.send(EventRileyLinkDeviceStatusChange(targetDevice, newState, errorCode))
     }
 
-    // The last Bluetooth signal strength (RSSI) read from the connected RileyLink, in dBm. Higher
-    // (closer to zero) means nearer. Used to find a misplaced RileyLink by walking warmer/colder.
+    // The last Bluetooth signal strength (RSSI) read from the RileyLink, in dBm. Higher (closer to
+    // zero) means nearer. Used to find a misplaced RileyLink by walking warmer/colder. It is set two
+    // ways: from readRemoteRssi while connected, and from an advertising scan while locating (see
+    // RileyLinkBLE.startLocating), so a lost RileyLink can be found even when it is not connected.
     var lastRssi: Int? = null
 
     fun updateRssi(rssi: Int) {
         lastRssi = rssi
         // Refresh the status screen live so the number updates while walking around.
+        if (this::targetDevice.isInitialized)
+            rxBus.send(EventRileyLinkDeviceStatusChange(targetDevice, rileyLinkServiceState, rileyLinkError))
+    }
+
+    // True while a "find my RileyLink" advertising scan is running (see RileyLinkBLE.startLocating).
+    // Drives the Find/Stop button and the "searching" hint on the status screen.
+    var locating: Boolean = false
+        private set
+
+    fun setLocating(value: Boolean) {
+        if (locating == value) return
+        locating = value
         if (this::targetDevice.isInitialized)
             rxBus.send(EventRileyLinkDeviceStatusChange(targetDevice, rileyLinkServiceState, rileyLinkError))
     }

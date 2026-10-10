@@ -10,6 +10,10 @@ import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Handler
@@ -96,6 +100,82 @@ class RileyLinkBLE(
     private fun stopRssiPolling() {
         rssiHandler.removeCallbacks(rssiPoller)
         rileyLinkServiceData.lastRssi = null
+    }
+
+    // ---- locate a misplaced RileyLink by scanning for its advertising ------------------------
+    //
+    // readRemoteRssi only works while connected, so it cannot help find a RileyLink that has dropped
+    // off. This scan does: it listens for the RileyLink's advertising packets, which carry a signal
+    // strength with no connection needed, as long as the device is powered on and not already
+    // connected to something. Each hit feeds the same "BLE signal" row through updateRssi, so the
+    // user can walk warmer/colder toward it. The scan is user-started from the status screen and is
+    // stopped on a timeout, when the link connects, or when the screen is closed - it is not left
+    // running in the background, where it would drain the battery.
+    private var locatorScanCallback: ScanCallback? = null
+    private val locatorHandler = Handler(Looper.getMainLooper())
+
+    @SuppressLint("MissingPermission")
+    fun startLocating() {
+        if (isConnected) return // already connected: the live RSSI poll already shows the signal
+        val address = rileyLinkServiceData.rileyLinkAddress
+            ?: rileyLinkServiceData.blockList.configuredAddress()
+        if (address == null) {
+            aapsLogger.error(LTag.PUMPBTCOMM, "Cannot locate: no RileyLink address is stored")
+            return
+        }
+        stopLocating()
+        val scanner = bluetoothAdapter?.bluetoothLeScanner
+        if (scanner == null) {
+            aapsLogger.error(LTag.PUMPBTCOMM, "Cannot locate: Bluetooth scanner not available")
+            return
+        }
+        val filters = listOf(ScanFilter.Builder().setDeviceAddress(address).build())
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
+            .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+            .build()
+        val callback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                if (result.device?.address == address) {
+                    aapsLogger.info(LTag.PUMPBTCOMM, "RileyLink locator: ${result.rssi} dBm (advertising; stronger/closer to 0 = nearer)")
+                    rileyLinkServiceData.updateRssi(result.rssi)
+                }
+            }
+
+            override fun onScanFailed(errorCode: Int) {
+                aapsLogger.error(LTag.PUMPBTCOMM, "RileyLink locator scan failed: $errorCode")
+                stopLocating()
+            }
+        }
+        try {
+            scanner.startScan(filters, settings, callback)
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.PUMPBTCOMM, "RileyLink locator start failed: ${e.javaClass.simpleName}: ${e.message}")
+            return
+        }
+        locatorScanCallback = callback
+        rileyLinkServiceData.setLocating(true)
+        aapsLogger.info(LTag.PUMPBTCOMM, "RileyLink locator scan started for $address")
+        // Auto-stop so a forgotten scan does not drain the battery.
+        locatorHandler.postDelayed({ stopLocating() }, LOCATE_TIMEOUT_MS)
+    }
+
+    @SuppressLint("MissingPermission")
+    fun stopLocating() {
+        locatorHandler.removeCallbacksAndMessages(null)
+        val callback = locatorScanCallback
+        locatorScanCallback = null
+        if (callback != null) {
+            try {
+                bluetoothAdapter?.bluetoothLeScanner?.stopScan(callback)
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.PUMPBTCOMM, "RileyLink locator stop failed: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
+        // Clear the stale reading only while not connected; a live connection owns lastRssi itself.
+        if (!isConnected) rileyLinkServiceData.lastRssi = null
+        rileyLinkServiceData.setLocating(false)
     }
 
     //val bluetoothAdapter: BluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
@@ -552,6 +632,9 @@ class RileyLinkBLE(
                 }
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     if (status == BluetoothGatt.GATT_SUCCESS) {
+                        // A locate scan, if one was running, has done its job: the live RSSI poll takes
+                        // over now, and the device stops advertising once connected anyway.
+                        stopLocating()
                         rileyLinkUtil.sendBroadcastMessage(RileyLinkConst.Intents.BluetoothConnected)
                         startRssiPolling()
                     } else aapsLogger.debug(LTag.PUMPBTCOMM, "BT State connected, GATT status $status (${getGattStatusMessage(status)})")
@@ -665,5 +748,9 @@ class RileyLinkBLE(
         // How often to read the Bluetooth signal while connected. Fast enough to feel live when
         // walking toward a misplaced RileyLink, slow enough not to crowd the radio.
         private const val RSSI_POLL_INTERVAL_MS = 2500L
+
+        // How long a "find my RileyLink" scan runs before it stops itself, so a scan left on does not
+        // drain the battery. The user can start it again from the status screen.
+        private const val LOCATE_TIMEOUT_MS = 180_000L
     }
 }

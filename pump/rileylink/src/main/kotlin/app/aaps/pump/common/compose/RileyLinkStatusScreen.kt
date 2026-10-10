@@ -14,6 +14,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
@@ -55,7 +56,7 @@ fun RileyLinkStatusScreen(
 
         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
             when (page) {
-                0 -> GeneralTab(state)
+                0 -> GeneralTab(state, onToggleLocating = viewModel::toggleLocating)
                 1 -> HistoryTab(state)
             }
         }
@@ -63,7 +64,7 @@ fun RileyLinkStatusScreen(
 }
 
 @Composable
-private fun GeneralTab(state: RileyLinkStatusUiState) {
+private fun GeneralTab(state: RileyLinkStatusUiState, onToggleLocating: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -87,6 +88,23 @@ private fun GeneralTab(state: RileyLinkStatusUiState) {
                 InfoRow(stringResource(R.string.rileylink_connection_status), state.connectionStatus)
                 InfoRow(stringResource(R.string.rileylink_connection_error), state.connectionError)
                 InfoRow(stringResource(R.string.rileylink_firmware_version), state.firmwareVersion)
+
+                // Find a misplaced RileyLink: scan for its Bluetooth signal even while disconnected.
+                Button(onClick = onToggleLocating, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        stringResource(
+                            if (state.locating) R.string.rileylink_locate_stop
+                            else R.string.rileylink_locate_start
+                        )
+                    )
+                }
+                if (state.locating && state.signalLevel == null) {
+                    Text(
+                        text = stringResource(R.string.rileylink_locate_searching),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 

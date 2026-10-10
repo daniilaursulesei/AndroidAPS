@@ -12,6 +12,7 @@ import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.pump.common.events.EventRileyLinkDeviceStatusChange
 import app.aaps.pump.common.hw.rileylink.R
 import app.aaps.pump.common.hw.rileylink.RileyLinkUtil
+import app.aaps.pump.common.hw.rileylink.ble.RileyLinkBLE
 import app.aaps.pump.common.hw.rileylink.data.RLHistoryItem
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkPumpDevice
 import app.aaps.pump.common.hw.rileylink.defs.RileyLinkTargetDevice
@@ -33,6 +34,7 @@ data class RileyLinkStatusUiState(
     val name: String = "-",
     val batteryLevel: String? = null,
     val signalLevel: String? = null,
+    val locating: Boolean = false,
     val connectionStatus: String = "-",
     val connectionError: String = "-",
     val firmwareVersion: String = "-",
@@ -60,6 +62,7 @@ data class RileyLinkHistoryItem(
 class RileyLinkStatusViewModel(
     private val rh: ResourceHelper,
     private val rileyLinkServiceData: RileyLinkServiceData,
+    private val rileyLinkBLE: RileyLinkBLE,
     private val rileyLinkUtil: RileyLinkUtil,
     private val activePlugin: ActivePlugin,
     private val dateUtil: DateUtil,
@@ -80,6 +83,18 @@ class RileyLinkStatusViewModel(
 
     fun refresh() {
         _uiState.update { buildState() }
+    }
+
+    /** Toggle the "find my RileyLink" advertising scan from the status screen. */
+    fun toggleLocating() {
+        if (rileyLinkServiceData.locating) rileyLinkBLE.stopLocating()
+        else rileyLinkBLE.startLocating()
+    }
+
+    override fun onCleared() {
+        // Never leave a scan running once the screen is gone - it would drain the battery.
+        rileyLinkBLE.stopLocating()
+        super.onCleared()
     }
 
     private fun buildState(): RileyLinkStatusUiState {
@@ -135,6 +150,7 @@ class RileyLinkStatusViewModel(
             name = rileyLinkServiceData.rileyLinkName ?: EMPTY,
             batteryLevel = batteryLevel,
             signalLevel = signalLevel,
+            locating = rileyLinkServiceData.locating,
             connectionStatus = rh.gs(rileyLinkServiceData.rileyLinkServiceState.resourceId),
             connectionError = rileyLinkServiceData.rileyLinkError?.let { rh.gs(it.getResourceId(targetDevice)) } ?: EMPTY,
             firmwareVersion = firmwareVersion,
