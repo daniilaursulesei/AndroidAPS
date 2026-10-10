@@ -339,6 +339,12 @@ class MedtronicOverviewViewModel(
         val rlLevel = if (rlState.isError() || rlError != null) StatusLevel.CRITICAL else StatusLevel.NORMAL
         add(PumpInfoRow(label = rh.gs(RileyLinkR.string.rileylink_status), value = rlStatusText, level = rlLevel))
 
+        // BLE signal strength, only while a reading is current (cleared on disconnect). Updates
+        // live, so a misplaced RileyLink can be found by walking warmer/colder on this screen.
+        rileyLinkServiceData.lastRssi?.let {
+            add(PumpInfoRow(label = rh.gs(RileyLinkR.string.rileylink_ble_signal), value = rh.gs(RileyLinkR.string.rileylink_ble_signal_value, it)))
+        }
+
         // A blocked RileyLink, one row each. Shown at the top and marked critical on purpose: while
         // this is here nothing is managing the pump, and a block that is quietly forgotten is the
         // worst outcome this feature has. Reading it from the stored list rather than from a field
