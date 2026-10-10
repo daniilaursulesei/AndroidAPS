@@ -28,6 +28,8 @@
     <string name="rileylink_name">Name:</string>
     <string name="rileylink_battery_level">Battery Level:</string>
     <string name="rileylink_battery_level_value">%1$d%%</string>
+    <string name="rileylink_ble_signal">BLE signal:</string>
+    <string name="rileylink_ble_signal_value" comment="%1$d = Bluetooth signal strength (RSSI) in dBm; higher, closer to 0, means the RileyLink is nearer">%1$d dBm (stronger = closer)</string>
     <string name="rileylink_connection_status">Connection Status:</string>
     <string name="rileylink_connection_error">Connection Error:</string>
     <string name="rileylink_device">Device</string>

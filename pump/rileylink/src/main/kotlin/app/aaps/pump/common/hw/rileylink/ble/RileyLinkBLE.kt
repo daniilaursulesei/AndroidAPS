@@ -12,6 +12,8 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import app.aaps.core.interfaces.configuration.Config
@@ -68,6 +70,33 @@ class RileyLinkBLE(
 
     private val gattDebugEnabled = true
     private var manualDisconnect = false
+
+    // Poll the Bluetooth signal strength while connected, so a misplaced RileyLink can be found by
+    // walking around and watching the number on the status screen (and in the log). A read is only
+    // issued when the link is idle, so it never steps on a radio command.
+    private val rssiHandler = Handler(Looper.getMainLooper())
+    private val rssiPoller = object : Runnable {
+        @SuppressLint("MissingPermission")
+        override fun run() {
+            if (!isConnected) return
+            try {
+                if (mCurrentOperation == null) bluetoothConnectionGatt?.readRemoteRssi()
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.PUMPBTCOMM, "readRemoteRssi failed: ${e.javaClass.simpleName}")
+            }
+            rssiHandler.postDelayed(this, RSSI_POLL_INTERVAL_MS)
+        }
+    }
+
+    private fun startRssiPolling() {
+        rssiHandler.removeCallbacks(rssiPoller)
+        rssiHandler.postDelayed(rssiPoller, RSSI_POLL_INTERVAL_MS)
+    }
+
+    private fun stopRssiPolling() {
+        rssiHandler.removeCallbacks(rssiPoller)
+        rileyLinkServiceData.lastRssi = null
+    }
 
     //val bluetoothAdapter: BluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
     val bluetoothAdapter: BluetoothAdapter? get() = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager?)?.adapter
@@ -505,8 +534,10 @@ class RileyLinkBLE(
                     aapsLogger.warn(LTag.PUMPBTCOMM, "onConnectionStateChange " + getGattStatusMessage(status) + " " + stateMessage)
                 }
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    if (status == BluetoothGatt.GATT_SUCCESS) rileyLinkUtil.sendBroadcastMessage(RileyLinkConst.Intents.BluetoothConnected)
-                    else aapsLogger.debug(LTag.PUMPBTCOMM, "BT State connected, GATT status $status (${getGattStatusMessage(status)})")
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        rileyLinkUtil.sendBroadcastMessage(RileyLinkConst.Intents.BluetoothConnected)
+                        startRssiPolling()
+                    } else aapsLogger.debug(LTag.PUMPBTCOMM, "BT State connected, GATT status $status (${getGattStatusMessage(status)})")
                 } else if (newState == BluetoothProfile.STATE_CONNECTING || newState == BluetoothProfile.STATE_DISCONNECTING) {
                     aapsLogger.debug(LTag.PUMPBTCOMM, "We are in ${if (status == BluetoothProfile.STATE_CONNECTING) "Connecting" else "Disconnecting"} state.")
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -514,6 +545,7 @@ class RileyLinkBLE(
                     // which let every later operation be started against a dead connection and wait
                     // out its full 22 second timeout instead of failing at once.
                     isConnected = false
+                    stopRssiPolling()
                     val expected = manualDisconnect
                     rileyLinkUtil.sendBroadcastMessage(RileyLinkConst.Intents.RileyLinkDisconnected)
                     // Only close the GATT client when we asked for the disconnect. On an unexpected
@@ -555,7 +587,12 @@ class RileyLinkBLE(
 
             override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
                 super.onReadRemoteRssi(gatt, rssi, status)
-                if (gattDebugEnabled)
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    // Logged at INFO (not behind gattDebug) so the signal trail is in the exported
+                    // log, and pushed to the status screen so it updates live while walking around.
+                    aapsLogger.info(LTag.PUMPBTCOMM, "RileyLink BLE signal: $rssi dBm (stronger/closer to 0 = nearer)")
+                    rileyLinkServiceData.updateRssi(rssi)
+                } else if (gattDebugEnabled)
                     aapsLogger.warn(LTag.PUMPBTCOMM, "onReadRemoteRssi " + getGattStatusMessage(status) + ": " + rssi)
             }
 
@@ -604,5 +641,12 @@ class RileyLinkBLE(
                 }
             }
         }
+    }
+
+    companion object {
+
+        // How often to read the Bluetooth signal while connected. Fast enough to feel live when
+        // walking toward a misplaced RileyLink, slow enough not to crowd the radio.
+        private const val RSSI_POLL_INTERVAL_MS = 2500L
     }
 }

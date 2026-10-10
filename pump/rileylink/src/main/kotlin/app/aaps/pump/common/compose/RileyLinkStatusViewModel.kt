@@ -32,6 +32,7 @@ data class RileyLinkStatusUiState(
     val address: String = "-",
     val name: String = "-",
     val batteryLevel: String? = null,
+    val signalLevel: String? = null,
     val connectionStatus: String = "-",
     val connectionError: String = "-",
     val firmwareVersion: String = "-",
@@ -92,6 +93,9 @@ class RileyLinkStatusViewModel(
             rileyLinkServiceData.batteryLevel?.let { rh.gs(R.string.rileylink_battery_level_value, it) } ?: EMPTY
         } else null
 
+        // BLE signal strength, shown only while a reading is current (cleared on disconnect).
+        val signalLevel = rileyLinkServiceData.lastRssi?.let { rh.gs(R.string.rileylink_ble_signal_value, it) }
+
         // Firmware
         val firmwareVersion = if (rileyLinkServiceData.isOrange && rileyLinkServiceData.versionOrangeFirmware != null) {
             rh.gs(R.string.rileylink_firmware_version_value_orange, rileyLinkServiceData.versionOrangeFirmware, rileyLinkServiceData.versionOrangeHardware ?: EMPTY)
@@ -130,6 +134,7 @@ class RileyLinkStatusViewModel(
             address = rileyLinkServiceData.rileyLinkAddress ?: EMPTY,
             name = rileyLinkServiceData.rileyLinkName ?: EMPTY,
             batteryLevel = batteryLevel,
+            signalLevel = signalLevel,
             connectionStatus = rh.gs(rileyLinkServiceData.rileyLinkServiceState.resourceId),
             connectionError = rileyLinkServiceData.rileyLinkError?.let { rh.gs(it.getResourceId(targetDevice)) } ?: EMPTY,
             firmwareVersion = firmwareVersion,

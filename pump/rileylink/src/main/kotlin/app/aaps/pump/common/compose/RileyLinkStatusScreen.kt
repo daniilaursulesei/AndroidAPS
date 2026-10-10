@@ -83,6 +83,7 @@ private fun GeneralTab(state: RileyLinkStatusUiState) {
                 InfoRow(stringResource(R.string.rileylink_address), state.address)
                 InfoRow(stringResource(R.string.rileylink_name), state.name)
                 state.batteryLevel?.let { InfoRow(stringResource(R.string.rileylink_battery_level), it) }
+                state.signalLevel?.let { InfoRow(stringResource(R.string.rileylink_ble_signal), it) }
                 InfoRow(stringResource(R.string.rileylink_connection_status), state.connectionStatus)
                 InfoRow(stringResource(R.string.rileylink_connection_error), state.connectionError)
                 InfoRow(stringResource(R.string.rileylink_firmware_version), state.firmwareVersion)

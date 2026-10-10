@@ -109,4 +109,15 @@ class RileyLinkServiceData(
         rileyLinkUtil.rileyLinkHistory.add(RLHistoryItem(rileyLinkServiceState, errorCode, targetDevice))
         rxBus.send(EventRileyLinkDeviceStatusChange(targetDevice, newState, errorCode))
     }
+
+    // The last Bluetooth signal strength (RSSI) read from the connected RileyLink, in dBm. Higher
+    // (closer to zero) means nearer. Used to find a misplaced RileyLink by walking warmer/colder.
+    var lastRssi: Int? = null
+
+    fun updateRssi(rssi: Int) {
+        lastRssi = rssi
+        // Refresh the status screen live so the number updates while walking around.
+        if (this::targetDevice.isInitialized)
+            rxBus.send(EventRileyLinkDeviceStatusChange(targetDevice, rileyLinkServiceState, rileyLinkError))
+    }
 }
