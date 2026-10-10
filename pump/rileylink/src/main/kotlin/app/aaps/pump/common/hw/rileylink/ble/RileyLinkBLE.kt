@@ -211,7 +211,22 @@ class RileyLinkBLE(
         return true
     }
 
-    fun findRileyLink(rileyLinkAddress: String) {
+    /**
+     * Opens the Bluetooth link to a RileyLink by address.
+     *
+     * [autoConnect] picks which kind of connection to open, and it matters a great deal for recovery:
+     *  - `true` (the default, used for the first connection) is a passive request. Android parks it in
+     *    a low duty-cycle background scanner and brings the link up "whenever it can". While the app
+     *    is not in the foreground that scanner is too slow to catch the RileyLink, so the request can
+     *    sit for a very long time with no callback at all - exactly what a logged outage showed.
+     *  - `false` is a direct connection: an active attempt with a ~30 s timeout that the Android stack
+     *    services even for a backgrounded foreground-service app. This is what every always-Bluetooth
+     *    pump driver here (Dana, Diaconn, Medtrum) uses, and it is how the reconnect watchdog recovers
+     *    a dropped link without the user having to open the app.
+     *
+     * The flag only reaches the direct (non-scanning) path; the OrangeLink scan path has its own way in.
+     */
+    fun findRileyLink(rileyLinkAddress: String, autoConnect: Boolean = true) {
         if (refuseBlocked("findRileyLink", rileyLinkAddress)) return
         aapsLogger.debug(LTag.PUMPBTCOMM, "RileyLink address: $rileyLinkAddress")
         // Must verify that this is a valid MAC, or crash.
@@ -223,7 +238,7 @@ class RileyLinkBLE(
         } else {
             rileyLinkDevice = bluetoothAdapter?.getRemoteDevice(rileyLinkAddress)
             // if this succeeds, we get a connection state change callback?
-            if (rileyLinkDevice != null) connectGattInternal()
+            if (rileyLinkDevice != null) connectGattInternal(autoConnect)
             else aapsLogger.error(LTag.PUMPBTCOMM, "RileyLink device not found with address: $rileyLinkAddress")
         }
     }
@@ -240,8 +255,10 @@ class RileyLinkBLE(
     }
 
     // This function must be run on UI thread.
+    // [autoConnect] true is Android's passive background connect (the default for the first link);
+    // false is a direct, actively-serviced connect used to recover a dropped link. See [findRileyLink].
     @SuppressLint("HardwareIds")
-    fun connectGattInternal() {
+    fun connectGattInternal(autoConnect: Boolean = true) {
         // Every path to a link comes through here, the OrangeLink scan included, so this is the
         // one place that has to hold for a block to be real.
         if (refuseBlocked("connectGattInternal", rileyLinkDevice?.address)) return
@@ -252,7 +269,7 @@ class RileyLinkBLE(
         if (config.PUMPDRIVERS && ContextCompat.checkSelfPermission(context, "android.permission.BLUETOOTH_CONNECT") != PackageManager.PERMISSION_GRANTED) {
             aapsLogger.debug(LTag.PUMPBTCOMM, "no permission")
             return
-        } else bluetoothConnectionGatt = rileyLinkDevice?.connectGattCompat(context, true, bluetoothGattCallback)
+        } else bluetoothConnectionGatt = rileyLinkDevice?.connectGattCompat(context, autoConnect, bluetoothGattCallback)
         // , BluetoothDevice.TRANSPORT_LE
         if (bluetoothConnectionGatt == null)
             aapsLogger.error(LTag.PUMPBTCOMM, "Failed to connect to Bluetooth Low Energy device at " + bluetoothAdapter?.address)

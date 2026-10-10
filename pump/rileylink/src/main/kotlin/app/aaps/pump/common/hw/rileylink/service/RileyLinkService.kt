@@ -243,13 +243,21 @@ abstract class RileyLinkService : Service() {
     // ---- recover a lost Bluetooth link --------------------------------------------------------
     //
     // On an unexpected drop the Bluetooth client is kept open so Android autoConnect can bring the
-    // link back on its own (see RileyLinkBLE.onConnectionStateChange). That is enough most of the
-    // time, but autoConnect is unreliable after a long time out of range, and a GATT 133 closes the
-    // client outright - and then nothing re-opens the link, so the pump is unreachable until the app
-    // is restarted. This is the watchdog for that: once the link has been down past a short grace
-    // period (long enough to give autoConnect its chance first), it closes any stale client and
-    // opens a fresh one, retried on a bounded cadence. Safe to call on a timer; it does nothing
-    // while connected, while the device is deliberately blocked, or with no stored address.
+    // link back on its own (see RileyLinkBLE.onConnectionStateChange). That is enough when the drop
+    // is brief or the app is in the foreground, but it is NOT enough in the case that matters: after
+    // a real drop while the app is in the background, autoConnect (a passive, low duty-cycle
+    // background scan) never catches the RileyLink again. A logged outage showed the link down for
+    // 1 h 48 min with zero connection callbacks, recovering only the moment the user opened the app.
+    //
+    // So once the link has been down past a short grace period (long enough to give the passive
+    // autoConnect its chance first), this watchdog reopens the link with a DIRECT connect
+    // (autoConnect = false): an active attempt with a ~30 s timeout that the stack services even in
+    // the background for a foreground-service app. This is exactly how the always-Bluetooth pump
+    // drivers here (Dana, Diaconn, Medtrum) connect, and they do not suffer this "only reconnects
+    // when the app is opened" problem. The retry cadence is longer than the direct-connect timeout,
+    // so each attempt runs to a definite success/failure before the next - it does not cut off an
+    // attempt that is still in progress. Safe to call on a timer; it does nothing while connected,
+    // while the device is deliberately blocked, or with no stored address.
     private var linkDownSinceMillis = 0L
     private var lastReopenMillis = 0L
 
@@ -274,14 +282,15 @@ abstract class RileyLinkService : Service() {
 
         aapsLogger.info(
             LTag.PUMPBTCOMM,
-            "Bluetooth link down for ${(now - linkDownSinceMillis) / 1000}s and autoConnect has not " +
-                "recovered it; closing any stale client and reopening $address"
+            "Bluetooth link down for ${(now - linkDownSinceMillis) / 1000}s and passive autoConnect has " +
+                "not recovered it; closing any stale client and opening a direct connection to $address"
         )
         // Drop whatever client is there - a dead autoConnect, or one a GATT 133 already closed - so
         // the fresh connectGatt cannot leave a second client behind.
         rileyLinkBLE.close()
         rileyLinkServiceData.setServiceState(RileyLinkServiceState.RileyLinkInitializing)
-        rileyLinkBLE.findRileyLink(address)
+        // Direct connect (autoConnect = false), not the passive background connect that failed above.
+        rileyLinkBLE.findRileyLink(address, autoConnect = false)
     }
 
     fun changeRileyLinkEncoding(encodingType: RileyLinkEncodingType) {
