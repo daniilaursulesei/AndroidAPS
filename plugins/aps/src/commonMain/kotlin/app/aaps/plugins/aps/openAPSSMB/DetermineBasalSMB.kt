@@ -1150,7 +1150,15 @@ class DetermineBasalSMB(
             //console.error(profile.temptargetSet, target_bg, rT.COB);
             // only allow microboluses with COB or low temp targets, or within DIA hours of a bolus
             val maxBolus: Double
-            if (microBolusAllowed && enableSMB && bg > threshold) {
+            // Personal change (dev-c): keep correction SMBs away from the low boundary.
+            // A single noisy upward tick near a low (e.g. bg 82 with target 95-110) used to
+            // open the SMB gate, because it only checked bg > threshold (80). Now an
+            // unannounced correction (COB == 0) needs bg above smbBgFloor; an announced meal
+            // (COB > 0) keeps the normal threshold so a meal coming down still gets help.
+            val smbBgFloor = if (meal_data.mealCOB > 0) threshold else 90.0
+            if (microBolusAllowed && enableSMB && bg > threshold && bg <= smbBgFloor)
+                consoleError.add("SMB suppressed near low: bg $bg <= floor $smbBgFloor, COB ${meal_data.mealCOB} [dev-c personal]")
+            if (microBolusAllowed && enableSMB && bg > smbBgFloor) {
                 // never bolus more than maxSMBBasalMinutes worth of basal
                 val mealInsulinReq = round(meal_data.mealCOB / profile.carb_ratio, 3)
                 if (iob_data.iob > mealInsulinReq && iob_data.iob > 0) {
